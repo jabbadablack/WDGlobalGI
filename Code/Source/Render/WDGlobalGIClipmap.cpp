@@ -56,6 +56,11 @@ namespace AZ
             return RHI::ImageViewDescriptor::Create(ScreenProbeDataFormat, 0, 0);
         }
 
+        RHI::ImageViewDescriptor WDGlobalGIClipmap::GetScreenProbeUintViewDescriptor()
+        {
+            return RHI::ImageViewDescriptor::Create(ScreenProbeUintFormat, 0, 0);
+        }
+
         RHI::ImageViewDescriptor WDGlobalGIClipmap::GetScreenProbeShViewDescriptor()
         {
             return RHI::ImageViewDescriptor::Create(ClipmapFormat, 0, 0);
@@ -155,6 +160,13 @@ namespace AZ
             m_screenProbeDataHistory = CreateAtlasImage(
                 WDGlobalGILimits::ScreenProbeDataMaxWidth, WDGlobalGILimits::ScreenProbeDataMaxHeight,
                 ScreenProbeDataFormat, "WDGlobalGI_ScreenProbeDataHistory");
+            m_screenTileAdaptive = CreateAtlasImage(
+                WDGlobalGILimits::ScreenProbeDataMaxWidth, WDGlobalGILimits::ScreenProbeDataMaxHeight,
+                ScreenProbeUintFormat, "WDGlobalGI_ScreenTileAdaptive");
+            m_screenTileAdaptiveHistory = CreateAtlasImage(
+                WDGlobalGILimits::ScreenProbeDataMaxWidth, WDGlobalGILimits::ScreenProbeDataMaxHeight,
+                ScreenProbeUintFormat, "WDGlobalGI_ScreenTileAdaptiveHistory");
+            m_screenProbeCounter = CreateAtlasImage(1, 1, ScreenProbeUintFormat, "WDGlobalGI_ScreenProbeCounter");
             m_screenProbeRadianceFiltered = CreateAtlasImage(
                 WDGlobalGILimits::ScreenProbeAtlasMaxWidth, WDGlobalGILimits::ScreenProbeAtlasMaxHeight,
                 ClipmapFormat, "WDGlobalGI_ScreenProbeRadianceFiltered");
@@ -180,6 +192,9 @@ namespace AZ
             m_screenProbeRadianceFiltered = nullptr;
             m_screenProbeData = nullptr;
             m_screenProbeDataHistory = nullptr;
+            m_screenTileAdaptive = nullptr;
+            m_screenTileAdaptiveHistory = nullptr;
+            m_screenProbeCounter = nullptr;
         }
 
         bool WDGlobalGIClipmap::ConsumeInvalidated()
@@ -355,6 +370,14 @@ namespace AZ
 
             grid.m_tilesX = AZ::GetClamp(grid.m_tilesX, 1u, maxTilesX);
             grid.m_tilesY = AZ::GetClamp(grid.m_tilesY, 1u, maxTilesY);
+
+            // Spend up to three quarters of the uniform probe count on adaptive probes, bounded by
+            // whatever atlas rows are left. At the atlas maximum there are none left and the solution
+            // degrades to the uniform grid rather than overrunning.
+            const uint32_t spareRows = maxTilesY - grid.m_tilesY;
+            const uint32_t wantRows = ((grid.m_tilesY * 3u / 4u) + 1u);
+            grid.m_adaptiveRows = AZ::GetMin(wantRows, spareRows);
+            grid.m_adaptiveBudget = grid.m_adaptiveRows * grid.m_tilesX;
             return grid;
         }
 
@@ -365,6 +388,8 @@ namespace AZ
             const uint32_t info[4] = { screenWidth, screenHeight, grid.m_tilesX, grid.m_tilesY };
             WDGlobalGISetConstant(srg, "m_screenProbeInfo", info, sizeof(info));
             WDGlobalGISetConstant(srg, "m_screenProbeTileSize", &grid.m_tileSize, sizeof(grid.m_tileSize));
+            const uint32_t adaptive[4] = { grid.m_tilesX, grid.m_adaptiveBudget, grid.m_tilesY, grid.TotalRows() };
+            WDGlobalGISetConstant(srg, "m_adaptiveLimits", adaptive, sizeof(adaptive));
             return grid;
         }
 

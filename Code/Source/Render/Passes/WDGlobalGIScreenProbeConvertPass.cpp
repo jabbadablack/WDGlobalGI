@@ -65,7 +65,7 @@ namespace AZ
 
             const WDGlobalGIClipmap::ScreenProbeGrid grid = WDGlobalGIClipmap::FillScreenProbeInfo(srg, screenW, screenH);
             m_tilesX = grid.m_tilesX;
-            m_tilesY = grid.m_tilesY;
+            m_tilesY = grid.TotalRows();
         }
 
         void WDGlobalGIScreenProbeConvertPass::GetDispatchThreadCount(uint32_t& x, uint32_t& y, uint32_t& z) const

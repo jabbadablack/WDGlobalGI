@@ -17,7 +17,7 @@
 ShaderResourceGroup PassSrg : SRG_PerPass
 {
     Texture2DMS<float>  m_depth;            // G-buffer depth (probe placement)
-    Texture2D<uint2>    m_screenProbeData;  // per-probe anchor + normal from the placement pass
+    Texture2D<uint4>    m_screenProbeData;  // per-probe anchor + normal from the placement pass
     Texture3D<float4>   m_radianceClipmap;
     Texture3D<float>    m_sdfClipmap;
     Texture3D<float4>   m_voxelNormalClipmap; // surface normal for leak reduction
@@ -26,12 +26,13 @@ ShaderResourceGroup PassSrg : SRG_PerPass
     RWTexture2D<float4> m_screenProbeAtlas;  // octahedral radiance (rgb), a = normalised hit distance
     Texture2D<float4>   m_screenProbeHistory;   // previous-frame atlas for motion reprojection (#2)
     Texture2D<float2>   m_motionVector;     // optional: absent pipelines fall back to camera reprojection
-    Texture2D<uint2>    m_screenProbeDataHistory; // previous-frame probe placement, for history validity
+    Texture2D<uint4>    m_screenProbeDataHistory; // previous-frame probe placement, for history validity
 
     WDGLOBALGI_SHARED_CONSTANTS
 
     uint4 m_screenProbeInfo;   // x = screenW, y = screenH, z = tilesX, w = tilesY
     uint  m_screenProbeTileSize;
+    uint4 m_adaptiveLimits;    // x = adaptive row width, y = slot budget, z = uniform rows, w = total rows
     float m_screenProbeTemporal;
     uint  m_hasMotionVector;
 }
@@ -47,7 +48,8 @@ void MainCS(uint3 dispatch_id : SV_DispatchThreadID)
     uint2 atlasCoord = dispatch_id.xy;
     uint tilesX = PassSrg::m_screenProbeInfo.z;
     uint tilesY = PassSrg::m_screenProbeInfo.w;
-    if (atlasCoord.x >= tilesX * WDGI_SP_OCTA || atlasCoord.y >= tilesY * WDGI_SP_OCTA)
+    // Adaptive probes live in the rows above the uniform grid, so the bound is the total row count.
+    if (atlasCoord.x >= tilesX * WDGI_SP_OCTA || atlasCoord.y >= PassSrg::m_adaptiveLimits.w * WDGI_SP_OCTA)
     {
         return;
     }
@@ -57,8 +59,8 @@ void MainCS(uint3 dispatch_id : SV_DispatchThreadID)
 
     uint2 screenRes = PassSrg::m_screenProbeInfo.xy;
     uint tileSize = PassSrg::m_screenProbeTileSize;
-    uint2 probeData = PassSrg::m_screenProbeData.Load(int3(int2(tile), 0)).xy;
-    uint2 probePixel = WDGI_ProbeAnchorPixel(probeData, tile, tileSize, screenRes);
+    uint4 probeData = PassSrg::m_screenProbeData.Load(int3(int2(tile), 0));
+    uint2 probePixel = WDGI_ProbeAnchorPixel(probeData);
 
     float depth = WDGI_ProbeValid(probeData.x) ? PassSrg::m_depth.Load(int2(probePixel), 0).r : 0.0f;
 

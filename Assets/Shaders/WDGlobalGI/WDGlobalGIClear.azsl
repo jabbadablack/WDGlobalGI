@@ -24,6 +24,7 @@ ShaderResourceGroup PassSrg : SRG_PerPass
     RWTexture3D<float4> m_voxelNormalClipmap;
     RWTexture3D<float4> m_albedoClipmap;
     RWTexture3D<float4> m_anisoRadianceClipmap; // 6-direction radiance buckets (#4)
+    RWTexture2D<uint>   m_screenProbeCounter;   // adaptive probe allocation, reset each frame
 
     WDGLOBALGI_SHARED_CONSTANTS
 }
@@ -47,6 +48,11 @@ int3 WDGI_LiveWorldCellAt(int3 physical, int3 centerCell)
 [numthreads(4, 4, 4)]
 void MainCS(uint3 dispatch_id : SV_DispatchThreadID)
 {
+    if (all(dispatch_id == uint3(0, 0, 0)))
+    {
+        PassSrg::m_screenProbeCounter[uint2(0, 0)] = 0u;
+    }
+
     int3 res = WDGI_GridRes();
     uint totalZ = (uint)res.z * PassSrg::m_cascadeCount;
     if (dispatch_id.x >= (uint)res.x || dispatch_id.y >= (uint)res.y || dispatch_id.z >= totalZ)

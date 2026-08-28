@@ -288,9 +288,11 @@ float3 WDGI_BoundProbeSpecular(float3 spec, float3 ambient, float maxScale)
 //       bit      25  reserved
 //       bits 26..31  reversed age, 63 = brand new, 0 = fully converged
 //   .y  bits  0..21  surface normal, 11:11 equal-area octahedral
-//       bits 22..31  anchor offset inside the tile, 5 bits per axis
+//   .z  bits  0..15  anchor pixel x,  bits 16..31  anchor pixel y
+//   .w  bits  0..15  owning screen tile x, bits 16..31 owning screen tile y
 // The world position is never stored: it is reconstructed from the anchor pixel and depth, so
-// every consumer agrees on where the probe is by construction.
+// every consumer agrees on where the probe is by construction. The anchor is absolute rather than
+// an offset inside the storing tile, because an adaptive probe is stored outside the tile it serves.
 // ---------------------------------------------------------------------------------------------
 
 #define WDGI_PROBE_VALID_BIT  (1u << 24u)
@@ -319,12 +321,11 @@ uint WDGI_UnpackProbeAge(uint packed)
     return packed >> 26u;
 }
 
-uint WDGI_PackProbeNormalOffset(float3 normal, uint2 offset)
+uint WDGI_PackProbeNormal(float3 normal)
 {
     float2 e = saturate(WDGI_OctaEncode(normal));
     uint2 q = uint2(e * 2047.0f + 0.5f);
-    uint2 o = min(offset, uint2(31u, 31u));
-    return q.x | (q.y << 11u) | (o.x << 22u) | (o.y << 27u);
+    return q.x | (q.y << 11u);
 }
 
 float3 WDGI_UnpackProbeNormal(uint packed)
@@ -333,28 +334,61 @@ float3 WDGI_UnpackProbeNormal(uint packed)
     return WDGI_OctaDecode(e);
 }
 
-uint2 WDGI_UnpackProbeOffset(uint packed)
+uint WDGI_PackProbePixel(uint2 pixel)
 {
-    return uint2((packed >> 22u) & 31u, (packed >> 27u) & 31u);
+    return (pixel.x & 0xffffu) | (pixel.y << 16u);
 }
 
-uint2 WDGI_ProbeAnchorPixel(uint2 probeData, uint2 tile, uint tileSize, uint2 screenRes)
+uint2 WDGI_UnpackProbePixel(uint packed)
 {
-    uint2 offset = min(WDGI_UnpackProbeOffset(probeData.y), uint2(tileSize - 1u, tileSize - 1u));
-    return min(tile * tileSize + offset, screenRes - uint2(1, 1));
+    return uint2(packed & 0xffffu, packed >> 16u);
+}
+
+uint2 WDGI_ProbeAnchorPixel(uint4 probeData)
+{
+    return WDGI_UnpackProbePixel(probeData.z);
+}
+
+uint2 WDGI_ProbeOwningTile(uint4 probeData)
+{
+    return WDGI_UnpackProbePixel(probeData.w);
+}
+
+// Adaptive probes live in the atlas rows above the uniform grid and serve a tile they are not stored
+// in, so each tile publishes how many it owns and where they start: count in the high 8 bits, first
+// atlas row-major slot in the low 24. Zero count means the tile is covered by its uniform probe alone.
+#define WDGI_SP_MAX_ADAPTIVE_PER_TILE 4u
+
+uint WDGI_PackAdaptiveHeader(uint count, uint offset)
+{
+    return (min(count, WDGI_SP_MAX_ADAPTIVE_PER_TILE) << 24u) | (offset & 0x00ffffffu);
+}
+
+uint WDGI_AdaptiveCount(uint header)
+{
+    return header >> 24u;
+}
+
+uint WDGI_AdaptiveOffset(uint header)
+{
+    return header & 0x00ffffffu;
+}
+
+uint2 WDGI_AdaptiveTile(uint slot, uint atlasTilesX, uint uniformTilesY)
+{
+    return uint2(slot % atlasTilesX, uniformTilesY + slot / atlasTilesX);
 }
 
 //! Reconstruct a probe's world position from its packed data. 'clipToWorld' is the inverse
 //! view-projection of the frame that probe data belongs to.
-bool WDGI_ProbeWorldFromData(
-    uint2 probeData, uint2 tile, uint tileSize, uint2 screenRes, float4x4 clipToWorld, out float3 worldPos)
+bool WDGI_ProbeWorldFromData(uint4 probeData, uint2 screenRes, float4x4 clipToWorld, out float3 worldPos)
 {
     worldPos = float3(0.0f, 0.0f, 0.0f);
     if (!WDGI_ProbeValid(probeData.x))
     {
         return false;
     }
-    uint2 px = WDGI_ProbeAnchorPixel(probeData, tile, tileSize, screenRes);
+    uint2 px = WDGI_ProbeAnchorPixel(probeData);
     float2 uv = (float2(px) + 0.5f) / float2(screenRes);
     float4 clip = float4(uv.x * 2.0f - 1.0f, (1.0f - uv.y) * 2.0f - 1.0f, WDGI_UnpackProbeDepth(probeData.x), 1.0f);
     float4 h = mul(clipToWorld, clip);

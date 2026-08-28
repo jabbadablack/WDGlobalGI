@@ -24,8 +24,11 @@ ShaderResourceGroup PassSrg : SRG_PerPass
     Texture2DMS<float>  m_depth;
     Texture2DMS<float4> m_normal;
     Texture2D<float2>   m_motionVector;     // optional: absent pipelines fall back to camera reprojection
-    Texture2D<uint2>    m_screenProbeDataHistory;
-    RWTexture2D<uint2>  m_screenProbeData;
+    Texture2D<uint4>    m_screenProbeDataHistory;
+    RWTexture2D<uint4>  m_screenProbeData;
+    Texture2D<uint>     m_screenTileAdaptiveHistory;
+    RWTexture2D<uint>   m_screenTileAdaptive;   // per tile: adaptive probe count + first slot
+    RWTexture2D<uint>   m_screenProbeCounter;   // 1x1 allocation counter for adaptive slots
 
     WDGLOBALGI_SHARED_CONSTANTS
 
@@ -33,6 +36,7 @@ ShaderResourceGroup PassSrg : SRG_PerPass
     uint  m_screenProbeTileSize;
     uint  m_screenProbeHistoryValid; // 0 for one frame after the probe grid changes shape
     uint  m_hasMotionVector;
+    uint4 m_adaptiveLimits;          // x = adaptive row width, y = slot budget, z = uniform rows, w = total rows
 }
 
 #include <WDGlobalGICommon.azsli>
@@ -41,6 +45,80 @@ float WDGI_AnchorDepthWeight(float candidateDepth, float targetDepth)
 {
     float rel = 1.0f - candidateDepth / max(targetDepth, 1e-6f);
     return exp2(-1000.0f * rel * rel);
+}
+
+// Build a probe's packed record for a chosen anchor pixel, resolving whether it may inherit the age
+// of whatever probe covered this world point last frame.
+uint4 BuildProbe(uint2 anchorPixel, uint2 owningTile, uint2 screenRes, uint tileSize, uint tilesX, uint tilesY)
+{
+    float depth = PassSrg::m_depth.Load(int2(anchorPixel), 0).r;
+    bool valid = depth > 0.0f;
+
+    float3 normal = float3(0.0f, 0.0f, 1.0f);
+    if (valid)
+    {
+        normal = DecodeNormalSignedOctahedron(PassSrg::m_normal.Load(int2(anchorPixel), 0).rgb);
+    }
+
+    uint reverseAge = WDGI_PROBE_MAX_AGE;
+    if (valid && PassSrg::m_screenProbeHistoryValid != 0u)
+    {
+        float2 uv = (float2(anchorPixel) + 0.5f) / float2(screenRes);
+        float3 worldPos = WDGI_ReconstructWorldPos(uv, depth);
+        float sceneDepth = distance(worldPos, PassSrg::m_cameraWorldPos.xyz);
+
+        float2 motion = PassSrg::m_motionVector.Load(int3(int2(anchorPixel), 0)).xy;
+        uint2 prevTile;
+        if (WDGI_PrevProbeTile(worldPos, uv, motion, PassSrg::m_hasMotionVector != 0u,
+                               screenRes, tileSize, uint2(tilesX, tilesY), prevTile))
+        {
+            // The uniform probe that covered this point last frame, and any adaptive probes that tile
+            // owned. An adaptive probe exists precisely because the uniform one represents its pixels
+            // badly, so without searching the children an adaptive probe could never find its own
+            // history and would restart from scratch every frame.
+            float bestWeight = 0.0f;
+            uint bestAge = WDGI_PROBE_MAX_AGE;
+
+            uint4 histData = PassSrg::m_screenProbeDataHistory.Load(int3(int2(prevTile), 0));
+            float3 histWorld;
+            if (WDGI_ProbeWorldFromData(histData, screenRes, PassSrg::m_prevClipToWorld, histWorld))
+            {
+                bestWeight = WDGI_ProbeWeight(histWorld, worldPos, normal, sceneDepth);
+                bestAge = WDGI_UnpackProbeAge(histData.x);
+            }
+
+            uint histHeader = PassSrg::m_screenTileAdaptiveHistory.Load(int3(int2(prevTile), 0)).x;
+            uint histCount = WDGI_AdaptiveCount(histHeader);
+            uint histBase = WDGI_AdaptiveOffset(histHeader);
+            [loop] for (uint c = 0u; c < histCount; ++c)
+            {
+                uint2 childTile = WDGI_AdaptiveTile(histBase + c, PassSrg::m_adaptiveLimits.x, tilesY);
+                uint4 childData = PassSrg::m_screenProbeDataHistory.Load(int3(int2(childTile), 0));
+                float3 childWorld;
+                if (!WDGI_ProbeWorldFromData(childData, screenRes, PassSrg::m_prevClipToWorld, childWorld))
+                {
+                    continue;
+                }
+                float childWeight = WDGI_ProbeWeight(childWorld, worldPos, normal, sceneDepth);
+                if (childWeight > bestWeight)
+                {
+                    bestWeight = childWeight;
+                    bestAge = WDGI_UnpackProbeAge(childData.x);
+                }
+            }
+
+            if (bestWeight >= 0.01f)
+            {
+                reverseAge = (bestAge > 0u) ? (bestAge - 1u) : 0u;
+            }
+        }
+    }
+
+    return uint4(
+        WDGI_PackProbeDepth(depth, valid, reverseAge),
+        WDGI_PackProbeNormal(normal),
+        WDGI_PackProbePixel(anchorPixel),
+        WDGI_PackProbePixel(owningTile));
 }
 
 [numthreads(8, 8, 1)]
@@ -65,10 +143,10 @@ void MainCS(uint3 dispatch_id : SV_DispatchThreadID)
     // Carry last frame's probe forward: reconstruct its world point, project it with this frame's
     // view-projection, and if it still falls in this tile search a 3x3 neighbourhood there for the
     // pixel whose depth best matches. Anything that fails a test simply leaves the tile centre.
-    uint2 prevData = PassSrg::m_screenProbeDataHistory.Load(int3(int2(tile), 0)).xy;
+    uint4 prevData = PassSrg::m_screenProbeDataHistory.Load(int3(int2(tile), 0));
     if (WDGI_ProbeValid(prevData.x))
     {
-        uint2 prevPixel = WDGI_ProbeAnchorPixel(prevData, tile, tileSize, screenRes);
+        uint2 prevPixel = WDGI_ProbeAnchorPixel(prevData);
         float2 prevUv = (float2(prevPixel) + 0.5f) / float2(screenRes);
         float4 prevClip = float4(prevUv.x * 2.0f - 1.0f, (1.0f - prevUv.y) * 2.0f - 1.0f,
                                  WDGI_UnpackProbeDepth(prevData.x), 1.0f);
@@ -113,43 +191,103 @@ void MainCS(uint3 dispatch_id : SV_DispatchThreadID)
         }
     }
 
-    bool valid = bestDepth > 0.0f;
-    float3 normal = float3(0.0f, 0.0f, 1.0f);
-    if (valid)
-    {
-        normal = DecodeNormalSignedOctahedron(PassSrg::m_normal.Load(int2(bestPixel), 0).rgb);
-    }
+    uint4 probe = BuildProbe(bestPixel, tile, screenRes, tileSize, tilesX, tilesY);
+    PassSrg::m_screenProbeData[tile] = probe;
 
-    // Decide once, here, whether this probe may keep its history, and record the answer as the age:
-    // age at maximum means "no usable history", which makes the trace's blend weight 1 and ignores
-    // whatever it reads. Rejecting is the same plane test the upsample uses, run against the probe
-    // that covered this world point last frame - found by reprojection, not by assuming it was this
-    // same tile, because a tile's world point drifts as the camera moves.
-    uint reverseAge = WDGI_PROBE_MAX_AGE;
-    if (valid && PassSrg::m_screenProbeHistoryValid != 0u)
-    {
-        float2 uv = (float2(bestPixel) + 0.5f) / float2(screenRes);
-        float3 worldPos = WDGI_ReconstructWorldPos(uv, bestDepth);
-        float sceneDepth = distance(worldPos, PassSrg::m_cameraWorldPos.xyz);
+    // Adaptive probes. A tile whose own probe cannot represent the surfaces inside it - a silhouette
+    // or thin geometry crossing the tile - gets extra probes at the pixels it covers worst. Coverage
+    // is measured with the very same weight the upsample will apply, so the placement answers the
+    // question the consumer actually asks rather than guessing with a proxy.
+    //
+    // Coverage is judged against this tile's own probe only, not against all four the upsample will
+    // blend. Reading a neighbour's probe here would race with the thread writing it, and resolving
+    // that properly is what makes daGI2's placement iterative across several dispatches. The effect
+    // is that a pixel a neighbouring tile would have covered can still earn a probe, so this
+    // over-places rather than under-places; the per-tile cap and the slot budget bound the cost, and
+    // a tile that cannot be served leaves its pixels to the uniform grid exactly as before.
+    uint adaptiveCount = 0u;
+    uint adaptiveBase = 0u;
 
-        float2 motion = PassSrg::m_motionVector.Load(int3(int2(bestPixel), 0)).xy;
-        uint2 prevTile;
-        if (WDGI_PrevProbeTile(worldPos, uv, motion, PassSrg::m_hasMotionVector != 0u,
-                               screenRes, tileSize, uint2(tilesX, tilesY), prevTile))
+    float3 tileWorld;
+    if (WDGI_ProbeWorldFromData(probe, screenRes, PassSrg::m_clipToWorld, tileWorld))
+    {
+        const uint kCandidateStride = 4u;
+        uint2 worstPixel[WDGI_SP_MAX_ADAPTIVE_PER_TILE];
+        float worstScore[WDGI_SP_MAX_ADAPTIVE_PER_TILE];
+        [unroll] for (uint w = 0u; w < WDGI_SP_MAX_ADAPTIVE_PER_TILE; ++w)
         {
-            uint2 histData = PassSrg::m_screenProbeDataHistory.Load(int3(int2(prevTile), 0)).xy;
-            float3 histWorld;
-            if (WDGI_ProbeWorldFromData(histData, prevTile, tileSize, screenRes, PassSrg::m_prevClipToWorld, histWorld) &&
-                WDGI_ProbeWeight(histWorld, worldPos, normal, sceneDepth) >= 0.01f)
+            worstScore[w] = 1.0f;
+            worstPixel[w] = bestPixel;
+        }
+
+        uint step = max(tileSize / kCandidateStride, 1u);
+        [loop] for (uint cy = 0u; cy < tileSize; cy += step)
+        {
+            [loop] for (uint cx = 0u; cx < tileSize; cx += step)
             {
-                uint prevAge = WDGI_UnpackProbeAge(histData.x);
-                reverseAge = (prevAge > 0u) ? (prevAge - 1u) : 0u;
+                uint2 c = min(tileOrigin + uint2(cx, cy), screenRes - uint2(1, 1));
+                float cd = PassSrg::m_depth.Load(int2(c), 0).r;
+                if (cd <= 0.0f)
+                {
+                    continue;
+                }
+                float2 cuv = (float2(c) + 0.5f) / float2(screenRes);
+                float3 cWorld = WDGI_ReconstructWorldPos(cuv, cd);
+                float3 cNormal = DecodeNormalSignedOctahedron(PassSrg::m_normal.Load(int2(c), 0).rgb);
+                float cDepth = distance(cWorld, PassSrg::m_cameraWorldPos.xyz);
+
+                float best = WDGI_ProbeWeight(tileWorld, cWorld, cNormal, cDepth);
+                if (best >= 0.01f)
+                {
+                    continue;
+                }
+
+                // Keep the worst-covered candidates, replacing the least bad one we are holding.
+                uint slot = 0u;
+                [unroll] for (uint k = 1u; k < WDGI_SP_MAX_ADAPTIVE_PER_TILE; ++k)
+                {
+                    slot = (worstScore[k] > worstScore[slot]) ? k : slot;
+                }
+                if (best < worstScore[slot])
+                {
+                    worstScore[slot] = best;
+                    worstPixel[slot] = c;
+                }
+            }
+        }
+
+        [unroll] for (uint n = 0u; n < WDGI_SP_MAX_ADAPTIVE_PER_TILE; ++n)
+        {
+            adaptiveCount += (worstScore[n] < 0.01f) ? 1u : 0u;
+        }
+
+        if (adaptiveCount > 0u)
+        {
+            // One allocation per tile, so a tile's probes are contiguous by construction and no
+            // second pass is needed to flatten them.
+            uint allocated = 0u;
+            InterlockedAdd(PassSrg::m_screenProbeCounter[uint2(0, 0)], adaptiveCount, allocated);
+            if (allocated + adaptiveCount <= PassSrg::m_adaptiveLimits.y)
+            {
+                adaptiveBase = allocated;
+                uint written = 0u;
+                [unroll] for (uint a = 0u; a < WDGI_SP_MAX_ADAPTIVE_PER_TILE; ++a)
+                {
+                    if (worstScore[a] >= 0.01f)
+                    {
+                        continue;
+                    }
+                    uint2 slotTile = WDGI_AdaptiveTile(adaptiveBase + written, PassSrg::m_adaptiveLimits.x, tilesY);
+                    PassSrg::m_screenProbeData[slotTile] = BuildProbe(worstPixel[a], tile, screenRes, tileSize, tilesX, tilesY);
+                    ++written;
+                }
+            }
+            else
+            {
+                adaptiveCount = 0u;
             }
         }
     }
 
-    uint2 offset = uint2(bestPixel - tileOrigin);
-    PassSrg::m_screenProbeData[tile] = uint2(
-        WDGI_PackProbeDepth(bestDepth, valid, reverseAge),
-        WDGI_PackProbeNormalOffset(normal, offset));
+    PassSrg::m_screenTileAdaptive[tile] = WDGI_PackAdaptiveHeader(adaptiveCount, adaptiveBase);
 }

@@ -93,7 +93,7 @@ namespace AZ
             //! Release the clipmap textures.
             void Release();
 
-            bool IsInitialized() const { return m_radianceClipmap && m_irradianceClipmap && m_sdfClipmap && m_voxelNormalClipmap && m_albedoClipmap && m_screenProbeAtlas && m_screenProbeSH && m_anisoRadianceClipmap && m_screenProbeAtlasHistory && m_volumetricFroxel && m_screenProbeRadianceFiltered && m_screenProbeData && m_screenProbeDataHistory; }
+            bool IsInitialized() const { return m_radianceClipmap && m_irradianceClipmap && m_sdfClipmap && m_voxelNormalClipmap && m_albedoClipmap && m_screenProbeAtlas && m_screenProbeSH && m_anisoRadianceClipmap && m_screenProbeAtlasHistory && m_volumetricFroxel && m_screenProbeRadianceFiltered && m_screenProbeData && m_screenProbeDataHistory && m_screenTileAdaptive && m_screenTileAdaptiveHistory && m_screenProbeCounter; }
 
             //! Recompute the per-cascade centres from the current camera position and refresh the
             //! shader constants from the configuration.
@@ -167,6 +167,19 @@ namespace AZ
             }
             static RHI::ImageViewDescriptor GetScreenProbeDataViewDescriptor();
 
+            //! Per-tile adaptive probe header (count + first slot), ping-ponged alongside the probe
+            //! data so a probe placed at a discontinuity can still find its own history.
+            const Data::Instance<RPI::AttachmentImage>& GetScreenTileAdaptiveCurrent(uint32_t frameIndex) const
+            {
+                return (frameIndex & 1u) ? m_screenTileAdaptiveHistory : m_screenTileAdaptive;
+            }
+            const Data::Instance<RPI::AttachmentImage>& GetScreenTileAdaptivePrev(uint32_t frameIndex) const
+            {
+                return (frameIndex & 1u) ? m_screenTileAdaptive : m_screenTileAdaptiveHistory;
+            }
+            const Data::Instance<RPI::AttachmentImage>& GetScreenProbeCounter() const { return m_screenProbeCounter; }
+            static RHI::ImageViewDescriptor GetScreenProbeUintViewDescriptor();
+
             const ShaderConstants& GetShaderConstants() const { return m_constants; }
 
             //! Set the debug-view mode constant uploaded to the GI shaders (0 = off).
@@ -208,6 +221,11 @@ namespace AZ
                 uint32_t m_tileSize = WDGlobalGILimits::ScreenProbeTileSize;
                 uint32_t m_tilesX = 1;
                 uint32_t m_tilesY = 1;
+                //! Adaptive probes occupy the atlas rows above the uniform grid, laid out row-major at
+                //! the same width, so one dispatch covers both and none of it is wasted.
+                uint32_t m_adaptiveRows = 0;
+                uint32_t m_adaptiveBudget = 0;
+                uint32_t TotalRows() const { return m_tilesY + m_adaptiveRows; }
             };
             static ScreenProbeGrid ComputeScreenProbeGrid(uint32_t screenWidth, uint32_t screenHeight);
 
@@ -231,6 +249,9 @@ namespace AZ
             Data::Instance<RPI::AttachmentImage> m_screenProbeRadianceFiltered; // cross-probe radiance filter
             Data::Instance<RPI::AttachmentImage> m_screenProbeData;          // per-probe placement (ping-pong)
             Data::Instance<RPI::AttachmentImage> m_screenProbeDataHistory;
+            Data::Instance<RPI::AttachmentImage> m_screenTileAdaptive;
+            Data::Instance<RPI::AttachmentImage> m_screenTileAdaptiveHistory;
+            Data::Instance<RPI::AttachmentImage> m_screenProbeCounter;
 
             ShaderConstants m_constants;
             bool m_invalidated = true;
@@ -243,7 +264,8 @@ namespace AZ
             // "typed UAV load additional formats" capability. Memory is trivial (~1.6 MB).
             static constexpr RHI::Format SdfFormat = RHI::Format::R32_FLOAT;
             static constexpr RHI::Format VoxelNormalFormat = RHI::Format::R8G8B8A8_UNORM;
-            static constexpr RHI::Format ScreenProbeDataFormat = RHI::Format::R32G32_UINT;
+            static constexpr RHI::Format ScreenProbeDataFormat = RHI::Format::R32G32B32A32_UINT;
+            static constexpr RHI::Format ScreenProbeUintFormat = RHI::Format::R32_UINT;
         };
     } // namespace Render
 } // namespace AZ

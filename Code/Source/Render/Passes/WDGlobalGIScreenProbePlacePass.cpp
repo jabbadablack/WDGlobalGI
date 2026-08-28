@@ -43,6 +43,12 @@ namespace AZ
                 WDGlobalGIClipmap::GetScreenProbeDataViewDescriptor(), RHI::ScopeAttachmentAccess::ReadWrite);
             WDGlobalGIImportAttachment(frameGraph, fp->GetClipmap().GetScreenProbeDataPrev(frameIndex),
                 WDGlobalGIClipmap::GetScreenProbeDataViewDescriptor(), RHI::ScopeAttachmentAccess::Read);
+            WDGlobalGIImportAttachment(frameGraph, fp->GetClipmap().GetScreenTileAdaptiveCurrent(frameIndex),
+                WDGlobalGIClipmap::GetScreenProbeUintViewDescriptor(), RHI::ScopeAttachmentAccess::ReadWrite);
+            WDGlobalGIImportAttachment(frameGraph, fp->GetClipmap().GetScreenTileAdaptivePrev(frameIndex),
+                WDGlobalGIClipmap::GetScreenProbeUintViewDescriptor(), RHI::ScopeAttachmentAccess::Read);
+            WDGlobalGIImportAttachment(frameGraph, fp->GetClipmap().GetScreenProbeCounter(),
+                WDGlobalGIClipmap::GetScreenProbeUintViewDescriptor(), RHI::ScopeAttachmentAccess::ReadWrite);
         }
 
         void WDGlobalGIScreenProbePlacePass::BindGIResources(const RHI::FrameGraphCompileContext& context, RPI::ShaderResourceGroup* srg)
@@ -63,6 +69,9 @@ namespace AZ
             WDGlobalGISetImage(srg, "m_normal", GetInputImageView(context, AZ::Name("Normal")));
             WDGlobalGISetImage(srg, "m_screenProbeData", fp->GetClipmap().GetScreenProbeDataCurrent(frameIndex));
             WDGlobalGISetImage(srg, "m_screenProbeDataHistory", fp->GetClipmap().GetScreenProbeDataPrev(frameIndex));
+            WDGlobalGISetImage(srg, "m_screenTileAdaptive", fp->GetClipmap().GetScreenTileAdaptiveCurrent(frameIndex));
+            WDGlobalGISetImage(srg, "m_screenTileAdaptiveHistory", fp->GetClipmap().GetScreenTileAdaptivePrev(frameIndex));
+            WDGlobalGISetImage(srg, "m_screenProbeCounter", fp->GetClipmap().GetScreenProbeCounter());
 
             uint32_t screenW = 1, screenH = 1;
             if (RPI::PassAttachmentBinding* binding = FindAttachmentBinding(AZ::Name("Depth")); binding && binding->GetAttachment())

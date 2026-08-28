@@ -26,7 +26,8 @@ ShaderResourceGroup PassSrg : SRG_PerPass
     Texture2DMS<float4> m_normal;
     Texture2DMS<float4> m_specularF0;   // rgb = F0, a = roughness
     Texture2DMS<float>  m_depth;
-    Texture2D<uint2>    m_screenProbeData;   // per-probe anchor + normal from the placement pass
+    Texture2D<uint4>    m_screenProbeData;   // per-probe anchor + normal from the placement pass
+    Texture2D<uint>     m_screenTileAdaptive; // per-tile adaptive probe count + first slot
     Texture2D<float4>   m_screenProbeSH;     // 9 irradiance-SH coeffs per probe (diffuse)
     Texture2D<float4>   m_screenProbeAtlas;  // octahedral radiance (rgb), a = normalised hit distance
 
@@ -34,6 +35,7 @@ ShaderResourceGroup PassSrg : SRG_PerPass
 
     uint4 m_screenProbeInfo;   // x = screenW, y = screenH, z = tilesX, w = tilesY
     uint  m_screenProbeTileSize;
+    uint4 m_adaptiveLimits;    // x = adaptive row width, y = slot budget, z = uniform rows, w = total rows
     float m_screenProbeSpecular;
     float m_specularRoughness;  // glossy cone width (0 = sharp mirror, 1 = blurry)
 }
@@ -43,13 +45,13 @@ ShaderResourceGroup PassSrg : SRG_PerPass
 // Reconstruct the world position of a probe (tile centre) from the G-buffer depth.
 bool ProbeWorldPos(int2 tile, uint2 screenRes, out float3 worldPos)
 {
-    uint2 probeData = PassSrg::m_screenProbeData.Load(int3(tile, 0)).xy;
+    uint4 probeData = PassSrg::m_screenProbeData.Load(int3(tile, 0));
     if (!WDGI_ProbeValid(probeData.x))
     {
         worldPos = float3(0, 0, 0);
         return false;
     }
-    uint2 probePixel = WDGI_ProbeAnchorPixel(probeData, uint2(tile), PassSrg::m_screenProbeTileSize, screenRes);
+    uint2 probePixel = WDGI_ProbeAnchorPixel(probeData);
     float d = PassSrg::m_depth.Load(int2(probePixel), 0).r;
     if (d <= 0.0f)
     {
@@ -124,6 +126,7 @@ PSOutput MainPS(VSOutput IN)
 
             float3 probeWorld;
             float geometric = 0.0f;
+            int2 bestProbeTile = tile;
             if (ProbeWorldPos(tile, screenRes, probeWorld))
             {
                 // Floored, so a pixel whose four probes all sit off its plane - a thin feature the
@@ -131,12 +134,35 @@ PSOutput MainPS(VSOutput IN)
                 geometric = max(1e-5f, WDGI_ProbeWeight(probeWorld, worldPos, normal, sceneDepth));
             }
 
+            // If this corner's tile owns adaptive probes, one of them may sit far closer to this
+            // pixel's surface than the tile's own probe does - that is why it was placed. Take the
+            // best of the family rather than blending them, so a probe on the far side of a
+            // silhouette never contributes at all.
+            uint header = PassSrg::m_screenTileAdaptive.Load(int3(tile, 0)).x;
+            uint adaptiveCount = WDGI_AdaptiveCount(header);
+            uint adaptiveBase = WDGI_AdaptiveOffset(header);
+            [loop] for (uint c = 0u; c < adaptiveCount; ++c)
+            {
+                int2 childTile = int2(WDGI_AdaptiveTile(adaptiveBase + c, PassSrg::m_adaptiveLimits.x, uint(maxTile.y) + 1u));
+                float3 childWorld;
+                if (!ProbeWorldPos(childTile, screenRes, childWorld))
+                {
+                    continue;
+                }
+                float childWeight = max(1e-5f, WDGI_ProbeWeight(childWorld, worldPos, normal, sceneDepth));
+                if (childWeight > geometric)
+                {
+                    geometric = childWeight;
+                    bestProbeTile = childTile;
+                }
+            }
+
             float w = bilinear * geometric;
-            cornerTile[j * 2 + i] = tile;
+            cornerTile[j * 2 + i] = bestProbeTile;
             cornerWeight[j * 2 + i] = w;
             if (w > 0.0f)
             {
-                uint2 shBase = uint2(uint(tile.x) * uint(WDGI_SP_COEFFS), uint(tile.y));
+                uint2 shBase = uint2(uint(bestProbeTile.x) * uint(WDGI_SP_COEFFS), uint(bestProbeTile.y));
                 [unroll] for (int k = 0; k < 9; ++k)
                 {
                     shAccum[k] += PassSrg::m_screenProbeSH.Load(int3(shBase + uint2(k, 0), 0)).rgb * w;

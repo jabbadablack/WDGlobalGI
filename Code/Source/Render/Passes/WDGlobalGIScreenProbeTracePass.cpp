@@ -94,7 +94,7 @@ namespace AZ
 
             const WDGlobalGIClipmap::ScreenProbeGrid grid = WDGlobalGIClipmap::FillScreenProbeInfo(srg, screenW, screenH);
             m_tilesX = grid.m_tilesX;
-            m_tilesY = grid.m_tilesY;
+            m_tilesY = grid.TotalRows();
             const float temporal = fp->GetScreenProbeTemporal();
             WDGlobalGISetConstant(srg, "m_screenProbeTemporal", &temporal, sizeof(temporal));
         }

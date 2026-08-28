@@ -23,6 +23,7 @@ ShaderResourceGroup PassSrg : SRG_PerPass
 
     uint4 m_screenProbeInfo;   // x = screenW, y = screenH, z = tilesX, w = tilesY
     uint  m_screenProbeTileSize;
+    uint4 m_adaptiveLimits;    // x = adaptive row width, y = slot budget, z = uniform rows, w = total rows
 }
 
 #include <WDGlobalGICommon.azsli>
@@ -31,7 +32,7 @@ ShaderResourceGroup PassSrg : SRG_PerPass
 void MainCS(uint3 dispatch_id : SV_DispatchThreadID)
 {
     uint2 tile = dispatch_id.xy;
-    if (tile.x >= PassSrg::m_screenProbeInfo.z || tile.y >= PassSrg::m_screenProbeInfo.w)
+    if (tile.x >= PassSrg::m_screenProbeInfo.z || tile.y >= PassSrg::m_adaptiveLimits.w)
     {
         return;
     }

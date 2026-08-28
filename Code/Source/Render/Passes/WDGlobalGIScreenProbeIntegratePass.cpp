@@ -60,6 +60,7 @@ namespace AZ
 
             const uint32_t frameIndex = fp->GetClipmap().GetShaderConstants().m_frameIndex;
             WDGlobalGIImportAttachment(frameGraph, fp->GetClipmap().GetScreenProbeDataCurrent(frameIndex), WDGlobalGIClipmap::GetScreenProbeDataViewDescriptor(), RHI::ScopeAttachmentAccess::Read, RHI::ScopeAttachmentStage::FragmentShader);
+            WDGlobalGIImportAttachment(frameGraph, fp->GetClipmap().GetScreenTileAdaptiveCurrent(frameIndex), WDGlobalGIClipmap::GetScreenProbeUintViewDescriptor(), RHI::ScopeAttachmentAccess::Read, RHI::ScopeAttachmentStage::FragmentShader);
             WDGlobalGIImportAttachment(frameGraph, fp->GetClipmap().GetScreenProbeSH(), WDGlobalGIClipmap::GetScreenProbeShViewDescriptor(), RHI::ScopeAttachmentAccess::Read, RHI::ScopeAttachmentStage::FragmentShader);
             WDGlobalGIImportAttachment(frameGraph, fp->GetClipmap().GetScreenProbeRadianceFiltered(), WDGlobalGIClipmap::GetScreenProbeAtlasViewDescriptor(), RHI::ScopeAttachmentAccess::Read, RHI::ScopeAttachmentStage::FragmentShader);
         }
@@ -76,6 +77,7 @@ namespace AZ
 
                 const uint32_t frameIndex = fp->GetClipmap().GetShaderConstants().m_frameIndex;
                 WDGlobalGISetImage(srg.get(), "m_screenProbeData", fp->GetClipmap().GetScreenProbeDataCurrent(frameIndex));
+                WDGlobalGISetImage(srg.get(), "m_screenTileAdaptive", fp->GetClipmap().GetScreenTileAdaptiveCurrent(frameIndex));
                 WDGlobalGISetImage(srg.get(), "m_screenProbeSH", fp->GetClipmap().GetScreenProbeSH());
                 WDGlobalGISetImage(srg.get(), "m_screenProbeAtlas", fp->GetClipmap().GetScreenProbeRadianceFiltered());
 

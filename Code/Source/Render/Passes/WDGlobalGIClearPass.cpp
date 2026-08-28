@@ -36,6 +36,7 @@ namespace AZ
             }
 
             const auto& clipmap = fp->GetClipmap();
+            WDGlobalGIImportAttachment(frameGraph, clipmap.GetScreenProbeCounter(), WDGlobalGIClipmap::GetScreenProbeUintViewDescriptor(), RHI::ScopeAttachmentAccess::ReadWrite);
             WDGlobalGIImportAttachment(frameGraph, clipmap.GetRadianceClipmap(), WDGlobalGIClipmap::GetRadianceViewDescriptor(), RHI::ScopeAttachmentAccess::ReadWrite);
             WDGlobalGIImportAttachment(frameGraph, clipmap.GetIrradianceClipmap(), WDGlobalGIClipmap::GetIrradianceViewDescriptor(), RHI::ScopeAttachmentAccess::ReadWrite);
             WDGlobalGIImportAttachment(frameGraph, clipmap.GetSdfClipmap(), WDGlobalGIClipmap::GetSdfViewDescriptor(), RHI::ScopeAttachmentAccess::ReadWrite);
@@ -53,6 +54,7 @@ namespace AZ
             }
 
             const auto& clipmap = fp->GetClipmap();
+            WDGlobalGISetImage(srg, "m_screenProbeCounter", clipmap.GetScreenProbeCounter());
             WDGlobalGISetImage(srg, "m_radianceClipmap", clipmap.GetRadianceClipmap());
             WDGlobalGISetImage(srg, "m_irradianceClipmap", clipmap.GetIrradianceClipmap());
             WDGlobalGISetImage(srg, "m_sdfClipmap", clipmap.GetSdfClipmap());

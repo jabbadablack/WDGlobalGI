@@ -21,7 +21,7 @@
 
 ShaderResourceGroup PassSrg : SRG_PerPass
 {
-    Texture2D<uint2>    m_screenProbeData;             // per-probe anchor + normal
+    Texture2D<uint4>    m_screenProbeData;             // per-probe anchor + normal
     Texture2D<float4>   m_screenProbeAtlas;            // temporally accumulated radiance, a = hit distance
     RWTexture2D<float4> m_screenProbeRadianceFiltered; // cross-probe filtered radiance
 
@@ -29,6 +29,7 @@ ShaderResourceGroup PassSrg : SRG_PerPass
 
     uint4 m_screenProbeInfo;
     uint  m_screenProbeTileSize;
+    uint4 m_adaptiveLimits;    // x = adaptive row width, y = slot budget, z = uniform rows, w = total rows
     float m_screenProbeBlur;   // 0 = passthrough, 1 = full filter
 }
 
@@ -50,7 +51,8 @@ void MainCS(uint3 dispatch_id : SV_DispatchThreadID)
     uint2 atlasCoord = dispatch_id.xy;
     uint tilesX = PassSrg::m_screenProbeInfo.z;
     uint tilesY = PassSrg::m_screenProbeInfo.w;
-    if (atlasCoord.x >= tilesX * WDGI_SP_OCTA || atlasCoord.y >= tilesY * WDGI_SP_OCTA)
+    // Adaptive probes live in the rows above the uniform grid, so the bound is the total row count.
+    if (atlasCoord.x >= tilesX * WDGI_SP_OCTA || atlasCoord.y >= PassSrg::m_adaptiveLimits.w * WDGI_SP_OCTA)
     {
         return;
     }
@@ -61,12 +63,12 @@ void MainCS(uint3 dispatch_id : SV_DispatchThreadID)
     uint tileSize = PassSrg::m_screenProbeTileSize;
 
     float4 centre = PassSrg::m_screenProbeAtlas.Load(int3(atlasCoord, 0));
-    uint2 centreData = PassSrg::m_screenProbeData.Load(int3(tile, 0)).xy;
+    uint4 centreData = PassSrg::m_screenProbeData.Load(int3(tile, 0));
 
     float3 centreWorld;
     float strength = saturate(PassSrg::m_screenProbeBlur);
     if (strength <= 0.001f ||
-        !WDGI_ProbeWorldFromData(centreData, uint2(tile), tileSize, screenRes, PassSrg::m_clipToWorld, centreWorld))
+        !WDGI_ProbeWorldFromData(centreData, screenRes, PassSrg::m_clipToWorld, centreWorld))
     {
         PassSrg::m_screenProbeRadianceFiltered[atlasCoord] = centre;
         return;
@@ -90,9 +92,9 @@ void MainCS(uint3 dispatch_id : SV_DispatchThreadID)
             continue;
         }
 
-        uint2 nData = PassSrg::m_screenProbeData.Load(int3(nTile, 0)).xy;
+        uint4 nData = PassSrg::m_screenProbeData.Load(int3(nTile, 0));
         float3 nWorld;
-        if (!WDGI_ProbeWorldFromData(nData, uint2(nTile), tileSize, screenRes, PassSrg::m_clipToWorld, nWorld))
+        if (!WDGI_ProbeWorldFromData(nData, screenRes, PassSrg::m_clipToWorld, nWorld))
         {
             continue;
         }
