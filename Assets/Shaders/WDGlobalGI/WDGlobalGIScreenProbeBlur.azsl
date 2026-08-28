@@ -16,6 +16,7 @@
 ShaderResourceGroup PassSrg : SRG_PerPass
 {
     Texture2DMS<float>  m_depth;                 // G-buffer depth (probe placement / depth weighting)
+    Texture2D<uint2>    m_screenProbeData;       // per-probe anchor from the placement pass
     Texture2D<float4>   m_screenProbeSH;         // raw irradiance SH (9 coeffs/probe)
     RWTexture2D<float4> m_screenProbeSHBlurred;  // depth-aware spatially-blurred output
 
@@ -30,8 +31,13 @@ ShaderResourceGroup PassSrg : SRG_PerPass
 
 bool TileWorldPos(int2 tile, uint2 screenRes, out float3 worldPos)
 {
-    uint tileSize = PassSrg::m_screenProbeTileSize;
-    uint2 px = min(uint2(tile) * tileSize + (tileSize / 2), screenRes - uint2(1, 1));
+    uint2 probeData = PassSrg::m_screenProbeData.Load(int3(tile, 0)).xy;
+    if (!WDGI_ProbeValid(probeData.x))
+    {
+        worldPos = float3(0, 0, 0);
+        return false;
+    }
+    uint2 px = WDGI_ProbeAnchorPixel(probeData, uint2(tile), PassSrg::m_screenProbeTileSize, screenRes);
     float d = PassSrg::m_depth.Load(int2(px), 0).r;
     if (d <= 0.0f)
     {

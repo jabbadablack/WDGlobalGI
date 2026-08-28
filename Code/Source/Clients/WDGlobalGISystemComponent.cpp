@@ -27,6 +27,7 @@
 #include <Render/Passes/WDGlobalGISdfUpdatePass.h>
 #include <Render/Passes/WDGlobalGIRelightPass.h>
 #include <Render/Passes/WDGlobalGIPropagatePass.h>
+#include <Render/Passes/WDGlobalGIScreenProbePlacePass.h>
 #include <Render/Passes/WDGlobalGIScreenProbeTracePass.h>
 #include <Render/Passes/WDGlobalGIScreenProbeConvertPass.h>
 #include <Render/Passes/WDGlobalGIScreenProbeBlurPass.h>
@@ -172,6 +173,7 @@ namespace AZ
             passSystem->AddPassCreator(AZ::Name("WDGlobalGISdfUpdatePass"), &WDGlobalGISdfUpdatePass::Create);
             passSystem->AddPassCreator(AZ::Name("WDGlobalGIRelightPass"), &WDGlobalGIRelightPass::Create);
             passSystem->AddPassCreator(AZ::Name("WDGlobalGIPropagatePass"), &WDGlobalGIPropagatePass::Create);
+            passSystem->AddPassCreator(AZ::Name("WDGlobalGIScreenProbePlacePass"), &WDGlobalGIScreenProbePlacePass::Create);
             passSystem->AddPassCreator(AZ::Name("WDGlobalGIScreenProbeTracePass"), &WDGlobalGIScreenProbeTracePass::Create);
             passSystem->AddPassCreator(AZ::Name("WDGlobalGIScreenProbeConvertPass"), &WDGlobalGIScreenProbeConvertPass::Create);
             passSystem->AddPassCreator(AZ::Name("WDGlobalGIScreenProbeBlurPass"), &WDGlobalGIScreenProbeBlurPass::Create);

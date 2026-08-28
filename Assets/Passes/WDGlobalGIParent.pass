@@ -56,6 +56,14 @@
                     "TemplateName": "WDGlobalGIPropagatePassTemplate"
                 },
                 {
+                    "Name": "WDGlobalGIScreenProbePlacePass",
+                    "TemplateName": "WDGlobalGIScreenProbePlacePassTemplate",
+                    "Connections": [
+                        { "LocalSlot": "Depth",  "AttachmentRef": { "Pass": "Parent", "Attachment": "DepthStencilInputOutput" } },
+                        { "LocalSlot": "Normal", "AttachmentRef": { "Pass": "Parent", "Attachment": "NormalInput" } }
+                    ]
+                },
+                {
                     "Name": "WDGlobalGIScreenProbeTracePass",
                     "TemplateName": "WDGlobalGIScreenProbeTracePassTemplate",
                     "Connections": [

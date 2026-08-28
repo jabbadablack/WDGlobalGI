@@ -1,0 +1,26 @@
+{
+    "Type": "JsonSerialization",
+    "Version": 1,
+    "ClassName": "PassAsset",
+    "ClassData": {
+        "PassTemplate": {
+            "Name": "WDGlobalGIScreenProbePlacePassTemplate",
+            "PassClass": "WDGlobalGIScreenProbePlacePass",
+            "Slots": [
+                {
+                    "Name": "Depth",
+                    "SlotType": "Input",
+                    "ScopeAttachmentUsage": "Shader",
+                    "ImageViewDesc": {
+                        "AspectFlags": [ "Depth" ]
+                    }
+                },
+                {
+                    "Name": "Normal",
+                    "SlotType": "Input",
+                    "ScopeAttachmentUsage": "Shader"
+                }
+            ]
+        }
+    }
+}

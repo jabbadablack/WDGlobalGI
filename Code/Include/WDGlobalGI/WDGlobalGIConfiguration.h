@@ -70,6 +70,12 @@ namespace AZ
             static constexpr uint32_t ScreenProbeShAtlasMaxWidth = 2160; // 240 tiles * 9 coeffs
             static constexpr uint32_t ScreenProbeShAtlasMaxHeight = 135; // 135 tiles
 
+            // One texel per screen probe: .x packs the anchor's depth + tags + age, .y packs the
+            // surface normal + the anchor's pixel offset inside its tile. The probe's world position
+            // is always reconstructed from the anchor, never stored.
+            static constexpr uint32_t ScreenProbeDataMaxWidth = ScreenProbeAtlasMaxWidth / ScreenProbeOctaRes;
+            static constexpr uint32_t ScreenProbeDataMaxHeight = ScreenProbeAtlasMaxHeight / ScreenProbeOctaRes;
+
             // Volumetric GI froxel volume (audit #7): a low-res view-aligned grid. Each froxel samples
             // the world GI for in-scattered indirect light, integrated front-to-back along view depth.
             static constexpr uint32_t VolumetricFroxelX = 160;

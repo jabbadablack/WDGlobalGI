@@ -51,6 +51,11 @@ namespace AZ
             return RHI::ImageViewDescriptor::Create(ClipmapFormat, 0, 0);
         }
 
+        RHI::ImageViewDescriptor WDGlobalGIClipmap::GetScreenProbeDataViewDescriptor()
+        {
+            return RHI::ImageViewDescriptor::Create(ScreenProbeDataFormat, 0, 0);
+        }
+
         RHI::ImageViewDescriptor WDGlobalGIClipmap::GetScreenProbeShViewDescriptor()
         {
             return RHI::ImageViewDescriptor::Create(ClipmapFormat, 0, 0);
@@ -147,6 +152,12 @@ namespace AZ
             m_screenProbeDepthAtlas = CreateAtlasImage(
                 WDGlobalGILimits::ScreenProbeAtlasMaxWidth, WDGlobalGILimits::ScreenProbeAtlasMaxHeight,
                 ClipmapFormat, "WDGlobalGI_ScreenProbeDepthAtlas");
+            m_screenProbeData = CreateAtlasImage(
+                WDGlobalGILimits::ScreenProbeDataMaxWidth, WDGlobalGILimits::ScreenProbeDataMaxHeight,
+                ScreenProbeDataFormat, "WDGlobalGI_ScreenProbeData");
+            m_screenProbeDataHistory = CreateAtlasImage(
+                WDGlobalGILimits::ScreenProbeDataMaxWidth, WDGlobalGILimits::ScreenProbeDataMaxHeight,
+                ScreenProbeDataFormat, "WDGlobalGI_ScreenProbeDataHistory");
             m_screenProbeSHBlurred = CreateAtlasImage(
                 WDGlobalGILimits::ScreenProbeShAtlasMaxWidth, WDGlobalGILimits::ScreenProbeShAtlasMaxHeight,
                 ClipmapFormat, "WDGlobalGI_ScreenProbeSHBlurred");
@@ -171,6 +182,8 @@ namespace AZ
             m_volumetricFroxel = nullptr;
             m_screenProbeDepthAtlas = nullptr;
             m_screenProbeSHBlurred = nullptr;
+            m_screenProbeData = nullptr;
+            m_screenProbeDataHistory = nullptr;
         }
 
         bool WDGlobalGIClipmap::ConsumeInvalidated()
@@ -203,7 +216,10 @@ namespace AZ
             // Screen-probe reprojection (#2): publish LAST frame's world->clip, then remember this frame's
             // for next frame. On the first frame the previous matrix is identity (reprojection just misses).
             m_lastWorldToClip.StoreToRowMajorFloat16(m_constants.m_prevWorldToClip);
+            m_lastClipToWorld.StoreToRowMajorFloat16(m_constants.m_prevClipToWorld);
+            worldToClip.StoreToRowMajorFloat16(m_constants.m_worldToClip);
             m_lastWorldToClip = worldToClip;
+            m_lastClipToWorld = clipToWorld;
 
             // Snap each cascade centre to its own cell grid so the toroidal addressing stays stable as the
             // camera moves (the texture only "scrolls" by whole cells).
@@ -388,6 +404,8 @@ namespace AZ
             setRaw("m_anisotropic", &m_constants.m_anisotropic, sizeof(m_constants.m_anisotropic));
             setRaw("m_useRadianceCache", &m_constants.m_useRadianceCache, sizeof(m_constants.m_useRadianceCache));
             setRaw("m_prevWorldToClip", m_constants.m_prevWorldToClip, sizeof(m_constants.m_prevWorldToClip));
+            setRaw("m_prevClipToWorld", m_constants.m_prevClipToWorld, sizeof(m_constants.m_prevClipToWorld));
+            setRaw("m_worldToClip", m_constants.m_worldToClip, sizeof(m_constants.m_worldToClip));
             setRaw("m_cascadeBlend", &m_constants.m_cascadeBlend, sizeof(m_constants.m_cascadeBlend));
         }
     } // namespace Render

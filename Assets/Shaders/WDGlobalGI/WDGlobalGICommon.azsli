@@ -20,31 +20,128 @@ static const float WDGI_TWO_PI = 6.28318530718f;
 // tile size is not here: it is resolution-dependent and arrives as PassSrg::m_screenProbeTileSize.
 #define WDGI_SP_OCTA 8     // octahedral radiance resolution per probe (WDGI_SP_OCTA x WDGI_SP_OCTA)
 #define WDGI_SP_COEFFS 9   // order-2 irradiance SH coefficients per probe
+#define WDGI_SP_MAXDIST 200.0f // probe hit distances are stored normalised by this (fp16 headroom)
 
 // ---------------------------------------------------------------------------------------------
-// Octahedral mapping (unit direction <-> [0,1]^2). Equal-area-ish, used for the screen-probe
-// radiance maps (this is the octahedral encoding that daGI2 uses on its screen probes).
+// Equal-area octahedral mapping (unit direction <-> [0,1]^2), after Clarberg 2008 - the same
+// mapping daGI2 and Lumen use. Equal-area matters: every texel then subtends the identical solid
+// angle 4*PI/res^2, which is what makes the flat 4*PI/N weight in the SH projection correct and
+// lets a per-texel direction jitter integrate without a per-texel weight. Interior texel j stands
+// for the direction at its centre, decode(((j + 0.5) / res) * 2 - 1); WDGI_OctaTexelDir and
+// WDGI_OctaNearestTexel are exact inverses so the write and read sides cannot drift apart.
 // ---------------------------------------------------------------------------------------------
 
 float2 WDGI_OctaEncode(float3 dir)
 {
-    dir /= (abs(dir.x) + abs(dir.y) + abs(dir.z));
-    float2 oct = dir.xy;
+    float3 a = abs(dir);
+    float r = sqrt(saturate(1.0f - a.z));
+    float mx = max(a.x, a.y);
+    float mn = min(a.x, a.y);
+    float b = (mx == 0.0f) ? 0.0f : (mn / mx);
+
+    float phi = atan(b) * (2.0f / WDGI_PI);
+    phi = (a.x < a.y) ? (1.0f - phi) : phi;
+
+    float v = phi * r;
+    float u = r - v;
     if (dir.z < 0.0f)
     {
-        oct = (1.0f - abs(dir.yx)) * float2(dir.x >= 0.0f ? 1.0f : -1.0f, dir.y >= 0.0f ? 1.0f : -1.0f);
+        float t = u;
+        u = 1.0f - v;
+        v = 1.0f - t;
     }
-    return oct * 0.5f + 0.5f;
+    u = (dir.x < 0.0f) ? -u : u;
+    v = (dir.y < 0.0f) ? -v : v;
+    return float2(u, v) * 0.5f + 0.5f;
 }
 
 float3 WDGI_OctaDecode(float2 uv)
 {
     float2 f = uv * 2.0f - 1.0f;
-    float3 n = float3(f.x, f.y, 1.0f - abs(f.x) - abs(f.y));
-    float t = saturate(-n.z);
-    n.x += (n.x >= 0.0f) ? -t : t;
-    n.y += (n.y >= 0.0f) ? -t : t;
-    return normalize(n);
+    float2 af = abs(f);
+    float signedDistance = 1.0f - (af.x + af.y);
+    float r = 1.0f - abs(signedDistance);
+
+    float phi = ((r == 0.0f) ? 1.0f : ((af.y - af.x) / r + 1.0f)) * (WDGI_PI * 0.25f);
+    float z = sign(signedDistance) * (1.0f - r * r);
+    float cosPhi = sign(f.x) * cos(phi);
+    float sinPhi = sign(f.y) * sin(phi);
+    float scaleXY = r * sqrt(max(2.0f - r * r, 0.0f));
+    return float3(cosPhi * scaleXY, sinPhi * scaleXY, z);
+}
+
+// The probe's octahedral map covers the hemisphere around its surface normal, not the whole sphere:
+// indirect light only arrives from above the surface, so a full-sphere map would spend half its
+// texels below it. Squeezing the sphere map into the |u|+|v| <= 1 diamond with a 45-degree rotation
+// keeps the mapping equal-area (the rotation's jacobian is constant), so the 8x8 map doubles its
+// angular resolution for the same 64 rays. The square's whole boundary is the horizon, so out-of-
+// domain lookups clamp to it rather than wrapping the way a sphere map would.
+
+float3 WDGI_HemiOctaDecode(float2 uv)
+{
+    float2 f = uv * 2.0f - 1.0f;
+    float2 d = float2(f.x + f.y, f.x - f.y) * 0.5f;
+    return WDGI_OctaDecode(d * 0.5f + 0.5f);
+}
+
+float2 WDGI_HemiOctaEncode(float3 dir)
+{
+    float2 d = WDGI_OctaEncode(dir) * 2.0f - 1.0f;
+    return float2(d.x + d.y, d.x - d.y) * 0.5f + 0.5f;
+}
+
+void WDGI_ProbeTangentFrame(float3 n, out float3 tangent, out float3 bitangent)
+{
+    float3 up = (abs(n.z) < 0.999f) ? float3(0.0f, 0.0f, 1.0f) : float3(1.0f, 0.0f, 0.0f);
+    tangent = normalize(cross(up, n));
+    bitangent = cross(n, tangent);
+}
+
+float3 WDGI_HemisphereTexelDir(uint2 octa, float3 n)
+{
+    float3 local = WDGI_HemiOctaDecode((float2(octa) + 0.5f) / float(WDGI_SP_OCTA));
+    float3 tangent, bitangent;
+    WDGI_ProbeTangentFrame(n, tangent, bitangent);
+    return local.x * tangent + local.y * bitangent + local.z * n;
+}
+
+float2 WDGI_HemisphereEncode(float3 dir, float3 n)
+{
+    float3 tangent, bitangent;
+    WDGI_ProbeTangentFrame(n, tangent, bitangent);
+    float3 local = float3(dot(dir, tangent), dot(dir, bitangent), dot(dir, n));
+    return saturate(WDGI_HemiOctaEncode(normalize(local)));
+}
+
+int2 WDGI_HemisphereNearestTexel(float3 dir, float3 n)
+{
+    uint2 t = uint2(WDGI_HemisphereEncode(dir, n) * float(WDGI_SP_OCTA));
+    return int2(min(t, uint2(WDGI_SP_OCTA - 1, WDGI_SP_OCTA - 1)));
+}
+
+struct WDGI_OctaTaps
+{
+    int2 m_texel[4];
+    float m_weight[4];
+};
+
+WDGI_OctaTaps WDGI_HemisphereBilinearTaps(float3 dir, float3 n)
+{
+    float2 p = WDGI_HemisphereEncode(dir, n) * float(WDGI_SP_OCTA) - 0.5f;
+    int2 b = int2(floor(p));
+    float2 f = saturate(p - float2(b));
+
+    const int hi = int(WDGI_SP_OCTA) - 1;
+    WDGI_OctaTaps taps;
+    taps.m_texel[0] = clamp(b + int2(0, 0), int2(0, 0), int2(hi, hi));
+    taps.m_texel[1] = clamp(b + int2(1, 0), int2(0, 0), int2(hi, hi));
+    taps.m_texel[2] = clamp(b + int2(0, 1), int2(0, 0), int2(hi, hi));
+    taps.m_texel[3] = clamp(b + int2(1, 1), int2(0, 0), int2(hi, hi));
+    taps.m_weight[0] = (1.0f - f.x) * (1.0f - f.y);
+    taps.m_weight[1] = f.x * (1.0f - f.y);
+    taps.m_weight[2] = (1.0f - f.x) * f.y;
+    taps.m_weight[3] = f.x * f.y;
+    return taps;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -85,6 +182,69 @@ float3 WDGI_SHEvalIrradiance(float3 coeffs[9], float3 n)
         e += coeffs[i] * Y[i];
     }
     return max(e, float3(0.0f, 0.0f, 0.0f));
+}
+
+// ---------------------------------------------------------------------------------------------
+// Screen-probe placement data. Two uints per probe, following daGI2's screen_probes_encoding.hlsl:
+//   .x  bits  0..23  anchor depth, the top 24 bits of the raw depth float (exact, free to pack)
+//       bit      24  valid (the anchor pixel has a surface)
+//       bit      25  reserved
+//       bits 26..31  reversed age, 63 = brand new, 0 = fully converged
+//   .y  bits  0..21  surface normal, 11:11 equal-area octahedral
+//       bits 22..31  anchor offset inside the tile, 5 bits per axis
+// The world position is never stored: it is reconstructed from the anchor pixel and depth, so
+// every consumer agrees on where the probe is by construction.
+// ---------------------------------------------------------------------------------------------
+
+#define WDGI_PROBE_VALID_BIT  (1u << 24u)
+#define WDGI_PROBE_MAX_AGE    63u
+
+uint WDGI_PackProbeDepth(float rawDepth, bool valid, uint reverseAge)
+{
+    uint packed = (asuint(rawDepth) >> 8u) & 0x00ffffffu;
+    packed |= valid ? WDGI_PROBE_VALID_BIT : 0u;
+    packed |= (min(reverseAge, WDGI_PROBE_MAX_AGE) << 26u);
+    return packed;
+}
+
+float WDGI_UnpackProbeDepth(uint packed)
+{
+    return asfloat((packed & 0x00ffffffu) << 8u);
+}
+
+bool WDGI_ProbeValid(uint packed)
+{
+    return (packed & WDGI_PROBE_VALID_BIT) != 0u;
+}
+
+uint WDGI_UnpackProbeAge(uint packed)
+{
+    return packed >> 26u;
+}
+
+uint WDGI_PackProbeNormalOffset(float3 normal, uint2 offset)
+{
+    float2 e = saturate(WDGI_OctaEncode(normal));
+    uint2 q = uint2(e * 2047.0f + 0.5f);
+    uint2 o = min(offset, uint2(31u, 31u));
+    return q.x | (q.y << 11u) | (o.x << 22u) | (o.y << 27u);
+}
+
+float3 WDGI_UnpackProbeNormal(uint packed)
+{
+    float2 e = float2(float(packed & 2047u), float((packed >> 11u) & 2047u)) / 2047.0f;
+    return WDGI_OctaDecode(e);
+}
+
+uint2 WDGI_UnpackProbeOffset(uint packed)
+{
+    return uint2((packed >> 22u) & 31u, (packed >> 27u) & 31u);
+}
+
+uint2 WDGI_ProbeAnchorPixel(uint2 probeData, uint2 tile, uint tileSize, uint2 screenRes)
+{
+    uint2 offset = min(WDGI_UnpackProbeOffset(probeData.y), uint2(tileSize - 1u, tileSize - 1u));
+    return min(tile * tileSize + offset, screenRes - uint2(1, 1));
 }
 
 // ---------------------------------------------------------------------------------------------

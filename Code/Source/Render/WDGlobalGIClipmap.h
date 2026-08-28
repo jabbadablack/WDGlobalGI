@@ -77,8 +77,12 @@ namespace AZ
                 AZStd::array<float, 4 * WDGlobalGILimits::MaxCascades> m_prevCascadeCenterAndCell{};
                 uint32_t m_anisotropic = 0;       // 1 = 6-direction anisotropic voxel radiance (#4)
                 uint32_t m_useRadianceCache = 0;  // 1 = escaped/long rays reuse cached world irradiance (#8)
-                // Last frame's world->clip (row-major) for screen-probe motion reprojection (#2).
+                // Last frame's world->clip (row-major) for screen-probe motion reprojection (#2), plus
+                // this frame's world->clip and last frame's clip->world, which probe re-anchoring needs
+                // to carry a probe's world point forward into the current frame.
                 float m_prevWorldToClip[16] = { 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f };
+                float m_prevClipToWorld[16] = { 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f };
+                float m_worldToClip[16]     = { 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f };
                 float m_cascadeBlend = 1.0f; // 0 = hard cascade boundaries, 1 = blend across them
             };
 
@@ -88,7 +92,7 @@ namespace AZ
             //! Release the clipmap textures.
             void Release();
 
-            bool IsInitialized() const { return m_radianceClipmap && m_irradianceClipmap && m_sdfClipmap && m_voxelNormalClipmap && m_albedoClipmap && m_screenProbeAtlas && m_screenProbeSH && m_anisoRadianceClipmap && m_screenProbeAtlasHistory && m_volumetricFroxel && m_screenProbeDepthAtlas && m_screenProbeSHBlurred; }
+            bool IsInitialized() const { return m_radianceClipmap && m_irradianceClipmap && m_sdfClipmap && m_voxelNormalClipmap && m_albedoClipmap && m_screenProbeAtlas && m_screenProbeSH && m_anisoRadianceClipmap && m_screenProbeAtlasHistory && m_volumetricFroxel && m_screenProbeDepthAtlas && m_screenProbeSHBlurred && m_screenProbeData && m_screenProbeDataHistory; }
 
             //! Recompute the per-cascade centres from the current camera position and refresh the
             //! shader constants from the configuration.
@@ -155,6 +159,18 @@ namespace AZ
                 return (frameIndex & 1u) ? m_screenProbeAtlas : m_screenProbeAtlasHistory;
             }
 
+            //! Per-probe placement data (anchor depth/tags/age + normal/offset), ping-ponged so the
+            //! placement pass can re-anchor this frame's probes onto last frame's world points.
+            const Data::Instance<RPI::AttachmentImage>& GetScreenProbeDataCurrent(uint32_t frameIndex) const
+            {
+                return (frameIndex & 1u) ? m_screenProbeDataHistory : m_screenProbeData;
+            }
+            const Data::Instance<RPI::AttachmentImage>& GetScreenProbeDataPrev(uint32_t frameIndex) const
+            {
+                return (frameIndex & 1u) ? m_screenProbeData : m_screenProbeDataHistory;
+            }
+            static RHI::ImageViewDescriptor GetScreenProbeDataViewDescriptor();
+
             const ShaderConstants& GetShaderConstants() const { return m_constants; }
 
             //! Set the debug-view mode constant uploaded to the GI shaders (0 = off).
@@ -218,10 +234,13 @@ namespace AZ
             Data::Instance<RPI::AttachmentImage> m_volumetricFroxel;         // view-aligned froxel GI (#7)
             Data::Instance<RPI::AttachmentImage> m_screenProbeDepthAtlas;    // octahedral depth moments (Chebyshev)
             Data::Instance<RPI::AttachmentImage> m_screenProbeSHBlurred;     // depth-aware spatial denoise of the SH
+            Data::Instance<RPI::AttachmentImage> m_screenProbeData;          // per-probe placement (ping-pong)
+            Data::Instance<RPI::AttachmentImage> m_screenProbeDataHistory;
 
             ShaderConstants m_constants;
             bool m_invalidated = true;
             AZ::Matrix4x4 m_lastWorldToClip = AZ::Matrix4x4::CreateIdentity(); // for reprojection (#2)
+            AZ::Matrix4x4 m_lastClipToWorld = AZ::Matrix4x4::CreateIdentity(); // for probe re-anchoring
 
             static constexpr RHI::Format ClipmapFormat = RHI::Format::R16G16B16A16_FLOAT;
             // R32_FLOAT is a guaranteed typed-UAV-load format. The SDF update reads its own UAV
@@ -229,6 +248,7 @@ namespace AZ
             // "typed UAV load additional formats" capability. Memory is trivial (~1.6 MB).
             static constexpr RHI::Format SdfFormat = RHI::Format::R32_FLOAT;
             static constexpr RHI::Format VoxelNormalFormat = RHI::Format::R8G8B8A8_UNORM;
+            static constexpr RHI::Format ScreenProbeDataFormat = RHI::Format::R32G32_UINT;
         };
     } // namespace Render
 } // namespace AZ

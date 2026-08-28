@@ -57,6 +57,10 @@
                 "Path": "Passes/WDGlobalGIDebug.pass"
             },
             {
+                "Name": "WDGlobalGIScreenProbePlacePassTemplate",
+                "Path": "Passes/WDGlobalGIScreenProbePlace.pass"
+            },
+            {
                 "Name": "WDGlobalGIParentPassTemplate",
                 "Path": "Passes/WDGlobalGIParent.pass"
             }

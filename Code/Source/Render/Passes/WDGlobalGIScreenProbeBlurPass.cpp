@@ -36,6 +36,8 @@ namespace AZ
                 return;
             }
 
+            const uint32_t frameIndex = fp->GetClipmap().GetShaderConstants().m_frameIndex;
+            WDGlobalGIImportAttachment(frameGraph, fp->GetClipmap().GetScreenProbeDataCurrent(frameIndex), WDGlobalGIClipmap::GetScreenProbeDataViewDescriptor(), RHI::ScopeAttachmentAccess::Read);
             WDGlobalGIImportAttachment(frameGraph, fp->GetClipmap().GetScreenProbeSH(), WDGlobalGIClipmap::GetScreenProbeShViewDescriptor(), RHI::ScopeAttachmentAccess::Read);
             WDGlobalGIImportAttachment(frameGraph, fp->GetClipmap().GetScreenProbeSHBlurred(), WDGlobalGIClipmap::GetScreenProbeShViewDescriptor(), RHI::ScopeAttachmentAccess::ReadWrite);
         }
@@ -48,7 +50,9 @@ namespace AZ
                 return;
             }
 
+            const uint32_t frameIndex = fp->GetClipmap().GetShaderConstants().m_frameIndex;
             WDGlobalGISetImage(srg, "m_depth", GetInputImageView(context, AZ::Name("Depth")));
+            WDGlobalGISetImage(srg, "m_screenProbeData", fp->GetClipmap().GetScreenProbeDataCurrent(frameIndex));
             const auto& sh = fp->GetClipmap().GetScreenProbeSH();
             const auto& shBlurred = fp->GetClipmap().GetScreenProbeSHBlurred();
             WDGlobalGISetImage(srg, "m_screenProbeSH", sh ? sh->GetImageView() : nullptr);

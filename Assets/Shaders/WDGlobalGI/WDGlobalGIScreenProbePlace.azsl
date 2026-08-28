@@ -1,0 +1,132 @@
+/*
+ * Copyright (c) Contributors to the Open 3D Engine Project.
+ * For complete copyright and license terms please see the LICENSE at the root of this distribution.
+ *
+ * SPDX-License-Identifier: Apache-2.0 OR MIT
+ *
+ * WDGlobalGI screen-probe placement. One thread per screen tile: choose the pixel the tile's probe
+ * sits on, and publish its depth, surface normal and in-tile offset so every later pass agrees on
+ * where the probe is instead of each re-deriving it from the tile centre.
+ *
+ * The choice is not simply the tile centre. Last frame's probe world position is carried forward
+ * through this frame's view-projection, and if it still lands inside this tile the anchor is snapped
+ * to the best-matching pixel near it. That keeps a probe pinned to the same world point as the camera
+ * moves, which is what lets the temporal accumulation downstream actually accumulate rather than
+ * average over a different surface point every frame.
+ */
+
+#include <Atom/Features/SrgSemantics.azsli>
+#include <Atom/RPI/Math.azsli>
+#include <WDGlobalGISharedConstants.azsli>
+
+ShaderResourceGroup PassSrg : SRG_PerPass
+{
+    Texture2DMS<float>  m_depth;
+    Texture2DMS<float4> m_normal;
+    Texture2D<uint2>    m_screenProbeDataHistory;
+    RWTexture2D<uint2>  m_screenProbeData;
+
+    WDGLOBALGI_SHARED_CONSTANTS
+
+    uint4 m_screenProbeInfo;
+    uint  m_screenProbeTileSize;
+}
+
+#include <WDGlobalGICommon.azsli>
+
+float WDGI_AnchorDepthWeight(float candidateDepth, float targetDepth)
+{
+    float rel = 1.0f - candidateDepth / max(targetDepth, 1e-6f);
+    return exp2(-1000.0f * rel * rel);
+}
+
+[numthreads(8, 8, 1)]
+void MainCS(uint3 dispatch_id : SV_DispatchThreadID)
+{
+    uint2 tile = dispatch_id.xy;
+    uint tilesX = PassSrg::m_screenProbeInfo.z;
+    uint tilesY = PassSrg::m_screenProbeInfo.w;
+    if (tile.x >= tilesX || tile.y >= tilesY)
+    {
+        return;
+    }
+
+    uint2 screenRes = PassSrg::m_screenProbeInfo.xy;
+    uint tileSize = PassSrg::m_screenProbeTileSize;
+    uint2 tileOrigin = tile * tileSize;
+    uint2 tileMax = min(tileOrigin + tileSize - 1u, screenRes - uint2(1, 1));
+
+    uint2 bestPixel = min(tileOrigin + tileSize / 2u, screenRes - uint2(1, 1));
+    float bestDepth = PassSrg::m_depth.Load(int2(bestPixel), 0).r;
+
+    // Carry last frame's probe forward: reconstruct its world point, project it with this frame's
+    // view-projection, and if it still falls in this tile search a 3x3 neighbourhood there for the
+    // pixel whose depth best matches. Anything that fails a test simply leaves the tile centre.
+    uint2 prevData = PassSrg::m_screenProbeDataHistory.Load(int3(int2(tile), 0)).xy;
+    if (WDGI_ProbeValid(prevData.x))
+    {
+        uint2 prevPixel = WDGI_ProbeAnchorPixel(prevData, tile, tileSize, screenRes);
+        float2 prevUv = (float2(prevPixel) + 0.5f) / float2(screenRes);
+        float4 prevClip = float4(prevUv.x * 2.0f - 1.0f, (1.0f - prevUv.y) * 2.0f - 1.0f,
+                                 WDGI_UnpackProbeDepth(prevData.x), 1.0f);
+        float4 prevWorldH = mul(PassSrg::m_prevClipToWorld, prevClip);
+        if (abs(prevWorldH.w) > 1e-6f)
+        {
+            float3 prevWorld = prevWorldH.xyz / prevWorldH.w;
+            float4 curClip = mul(PassSrg::m_worldToClip, float4(prevWorld, 1.0f));
+            if (curClip.w > 1e-4f)
+            {
+                float2 ndc = curClip.xy / curClip.w;
+                float2 uv = float2(ndc.x * 0.5f + 0.5f, 0.5f - ndc.y * 0.5f);
+                int2 centre = int2(uv * float2(screenRes));
+                if (all(centre >= int2(tileOrigin)) && all(centre <= int2(tileMax)))
+                {
+                    float targetDepth = curClip.z / curClip.w;
+                    float bestScore = 0.0f;
+                    [unroll] for (int dy = -1; dy <= 1; ++dy)
+                    {
+                        [unroll] for (int dx = -1; dx <= 1; ++dx)
+                        {
+                            int2 c = clamp(centre + int2(dx, dy), int2(tileOrigin), int2(tileMax));
+                            float d = PassSrg::m_depth.Load(c, 0).r;
+                            if (d <= 0.0f)
+                            {
+                                continue;
+                            }
+                            // Tile-relative falloff: a bigger tile must not pull harder toward its centre.
+                            float fromCentre = float(dx * dx + dy * dy);
+                            float score = WDGI_AnchorDepthWeight(d, targetDepth) *
+                                          exp2(-0.64f * fromCentre / float(tileSize * tileSize));
+                            if (score > bestScore)
+                            {
+                                bestScore = score;
+                                bestPixel = uint2(c);
+                                bestDepth = d;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    bool valid = bestDepth > 0.0f;
+    float3 normal = float3(0.0f, 0.0f, 1.0f);
+    if (valid)
+    {
+        normal = DecodeNormalSignedOctahedron(PassSrg::m_normal.Load(int2(bestPixel), 0).rgb);
+    }
+
+    // A probe that kept its anchor keeps ageing toward converged; a new or moved one restarts.
+    uint reverseAge = WDGI_PROBE_MAX_AGE;
+    if (valid && WDGI_ProbeValid(prevData.x))
+    {
+        uint prevAge = WDGI_UnpackProbeAge(prevData.x);
+        reverseAge = (prevAge > 0u) ? (prevAge - 1u) : 0u;
+    }
+
+    uint2 offset = uint2(bestPixel - tileOrigin);
+    PassSrg::m_screenProbeData[tile] = uint2(
+        WDGI_PackProbeDepth(bestDepth, valid, reverseAge),
+        WDGI_PackProbeNormalOffset(normal, offset));
+}

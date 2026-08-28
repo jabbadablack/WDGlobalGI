@@ -36,6 +36,8 @@ set(FILES
     Source/Render/Passes/WDGlobalGIPropagatePass.h
     Source/Render/Passes/WDGlobalGIApplyPass.cpp
     Source/Render/Passes/WDGlobalGIApplyPass.h
+    Source/Render/Passes/WDGlobalGIScreenProbePlacePass.cpp
+    Source/Render/Passes/WDGlobalGIScreenProbePlacePass.h
     Source/Render/Passes/WDGlobalGIScreenProbeTracePass.cpp
     Source/Render/Passes/WDGlobalGIScreenProbeTracePass.h
     Source/Render/Passes/WDGlobalGIScreenProbeConvertPass.cpp

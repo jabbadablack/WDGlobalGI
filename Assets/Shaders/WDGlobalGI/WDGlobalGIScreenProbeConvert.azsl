@@ -16,6 +16,7 @@
 ShaderResourceGroup PassSrg : SRG_PerPass
 {
     Texture2D<float4>   m_screenProbeAtlas; // octahedral radiance (read)
+    Texture2D<uint2>    m_screenProbeData;  // per-probe normal (the octahedral map's hemisphere)
     RWTexture2D<float4> m_screenProbeSH;    // 9 irradiance-SH coeff texels per probe (write)
 
     WDGLOBALGI_SHARED_CONSTANTS
@@ -36,6 +37,7 @@ void MainCS(uint3 dispatch_id : SV_DispatchThreadID)
     }
 
     uint2 octaBase = tile * uint(WDGI_SP_OCTA);
+    float3 probeNormal = WDGI_UnpackProbeNormal(PassSrg::m_screenProbeData.Load(int3(int2(tile), 0)).y);
 
     float3 sh[9];
     [unroll] for (int k = 0; k < 9; ++k)
@@ -47,7 +49,7 @@ void MainCS(uint3 dispatch_id : SV_DispatchThreadID)
     {
         [loop] for (uint ox = 0; ox < WDGI_SP_OCTA; ++ox)
         {
-            float3 dir = WDGI_OctaDecode((float2(ox, oy) + 0.5f) / float(WDGI_SP_OCTA));
+            float3 dir = WDGI_HemisphereTexelDir(uint2(ox, oy), probeNormal);
             float3 L = PassSrg::m_screenProbeAtlas.Load(int3(octaBase + uint2(ox, oy), 0)).rgb;
             float Y[9];
             WDGI_SHBasis(dir, Y);
@@ -58,8 +60,10 @@ void MainCS(uint3 dispatch_id : SV_DispatchThreadID)
         }
     }
 
-    // Monte-Carlo solid-angle weight (uniform sphere) and cosine-lobe convolution -> irradiance SH.
-    const float weight = (4.0f * 3.14159265f) / float(WDGI_SP_OCTA * WDGI_SP_OCTA);
+    // Monte-Carlo solid-angle weight (uniform hemisphere) and cosine-lobe convolution -> irradiance
+    // SH. Equal-area octahedral means every texel subtends the same solid angle, so this is a single
+    // constant rather than a per-texel jacobian.
+    const float weight = (2.0f * 3.14159265f) / float(WDGI_SP_OCTA * WDGI_SP_OCTA);
     uint2 shBase = uint2(tile.x * uint(WDGI_SP_COEFFS), tile.y);
     [unroll] for (int k = 0; k < 9; ++k)
     {

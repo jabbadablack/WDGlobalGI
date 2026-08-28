@@ -24,6 +24,7 @@ ShaderResourceGroup PassSrg : SRG_PerPass
     Texture2DMS<float4> m_albedo;
     Texture2DMS<float4> m_normal;
     Texture2DMS<float>  m_depth;
+    Texture2D<uint2>    m_screenProbeData;   // per-probe anchor + normal from the placement pass
     Texture2D<float4>   m_screenProbeSH;     // 9 irradiance-SH coeffs per probe (diffuse)
     Texture2D<float4>   m_screenProbeAtlas;  // octahedral radiance (specular)
     Texture2D<float4>   m_screenProbeDepthAtlas; // octahedral depth moments for Chebyshev visibility
@@ -39,10 +40,16 @@ ShaderResourceGroup PassSrg : SRG_PerPass
 #include <WDGlobalGICommon.azsli>
 
 // Reconstruct the world position of a probe (tile centre) from the G-buffer depth.
-bool ProbeWorldPos(int2 tile, uint2 screenRes, out float3 worldPos)
+bool ProbeWorldPos(int2 tile, uint2 screenRes, out float3 worldPos, out float3 probeNormal)
 {
-    uint tileSize = PassSrg::m_screenProbeTileSize;
-    uint2 probePixel = min(uint2(tile) * tileSize + (tileSize / 2), screenRes - uint2(1, 1));
+    uint2 probeData = PassSrg::m_screenProbeData.Load(int3(tile, 0)).xy;
+    probeNormal = WDGI_UnpackProbeNormal(probeData.y);
+    if (!WDGI_ProbeValid(probeData.x))
+    {
+        worldPos = float3(0, 0, 0);
+        return false;
+    }
+    uint2 probePixel = WDGI_ProbeAnchorPixel(probeData, uint2(tile), PassSrg::m_screenProbeTileSize, screenRes);
     float d = PassSrg::m_depth.Load(int2(probePixel), 0).r;
     if (d <= 0.0f)
     {
@@ -57,7 +64,7 @@ bool ProbeWorldPos(int2 tile, uint2 screenRes, out float3 worldPos)
 // DDGI-style Chebyshev visibility: how visible the shading point is from a probe, using the probe's
 // octahedral depth moments (mean + mean^2 hit distance). This is what makes the interpolation leak-free
 // and sharp at contacts - a probe occluded from the pixel (e.g. behind a wall) gets ~zero weight.
-float ChebyshevVisibility(int2 tile, float3 probeWorld, float3 worldPos)
+float ChebyshevVisibility(int2 tile, float3 probeWorld, float3 probeNormal, float3 worldPos)
 {
     float3 toPixel = worldPos - probeWorld;
     float dist = length(toPixel);
@@ -66,19 +73,19 @@ float ChebyshevVisibility(int2 tile, float3 probeWorld, float3 worldPos)
         return 1.0f;
     }
     float3 dir = toPixel / dist;
-    float2 octaUV = WDGI_OctaEncode(dir);
-    uint2 texel = uint2(tile) * uint(WDGI_SP_OCTA) + uint2(saturate(octaUV) * float(WDGI_SP_OCTA - 1));
+    int2 texel = tile * int(WDGI_SP_OCTA) + WDGI_HemisphereNearestTexel(dir, probeNormal);
     float2 moments = PassSrg::m_screenProbeDepthAtlas.Load(int3(texel, 0)).rg;
 
     float mean = moments.x;
-    if (dist <= mean)
+    float distNorm = dist / WDGI_SP_MAXDIST;
+    if (distNorm <= mean)
     {
         return 1.0f; // the probe sees the point along this direction -> fully visible
     }
     float variance = abs(moments.y - mean * mean);
     float softFloor = mean * 0.08f;             // relative floor -> a soft transition, not a hard cutoff
     variance = max(variance, softFloor * softFloor);
-    float d = dist - mean;
+    float d = distNorm - mean;
     float cheb = variance / (variance + d * d);
     return max(cheb * cheb, 0.04f);             // sharpen, with a small floor so nothing goes fully black
 }
@@ -134,10 +141,11 @@ PSOutput MainPS(VSOutput IN)
             float bilinear = (i == 0 ? (1.0f - frac.x) : frac.x) * (j == 0 ? (1.0f - frac.y) : frac.y);
 
             float3 probeWorld;
+            float3 probeNormal;
             float visibility = 0.0f;
-            if (ProbeWorldPos(tile, screenRes, probeWorld))
+            if (ProbeWorldPos(tile, screenRes, probeWorld, probeNormal))
             {
-                visibility = ChebyshevVisibility(tile, probeWorld, worldPos);
+                visibility = ChebyshevVisibility(tile, probeWorld, probeNormal, worldPos);
             }
 
             float w = bilinear * visibility;
@@ -176,6 +184,7 @@ PSOutput MainPS(VSOutput IN)
     if (PassSrg::m_screenProbeSpecular > 0.0f)
     {
         int2 nearTile = clamp(int2(round(probeCoord)), int2(0, 0), maxTile);
+        float3 nearNormal = WDGI_UnpackProbeNormal(PassSrg::m_screenProbeData.Load(int3(nearTile, 0)).y);
         float3 viewDir = normalize(WDGI_ReconstructWorldPos(IN.m_texCoord, 1.0f) - worldPos);
         float3 reflDir = reflect(-viewDir, normal);
 
@@ -190,12 +199,15 @@ PSOutput MainPS(VSOutput IN)
             float2(0.0f, 0.0f), float2(1.0f, 0.0f), float2(-1.0f, 0.0f), float2(0.0f, 1.0f), float2(0.0f, -1.0f)
         };
         float3 reflRadiance = float3(0.0f, 0.0f, 0.0f);
+        int2 octaBase = nearTile * int(WDGI_SP_OCTA);
         [unroll] for (int s = 0; s < 5; ++s)
         {
             float3 d = normalize(reflDir + (tangent * coneOffsets[s].x + bitangent * coneOffsets[s].y) * spread);
-            float2 octaUV = WDGI_OctaEncode(d);
-            uint2 octaTexel = uint2(nearTile) * uint(WDGI_SP_OCTA) + uint2(saturate(octaUV) * float(WDGI_SP_OCTA - 1));
-            reflRadiance += PassSrg::m_screenProbeAtlas.Load(int3(octaTexel, 0)).rgb;
+            WDGI_OctaTaps taps = WDGI_HemisphereBilinearTaps(d, nearNormal);
+            [unroll] for (int t = 0; t < 4; ++t)
+            {
+                reflRadiance += PassSrg::m_screenProbeAtlas.Load(int3(octaBase + taps.m_texel[t], 0)).rgb * taps.m_weight[t];
+            }
         }
         reflRadiance *= 0.2f; // average of 5 taps
 
