@@ -23,6 +23,7 @@ ShaderResourceGroup PassSrg : SRG_PerPass
 {
     Texture2DMS<float>  m_depth;
     Texture2DMS<float4> m_normal;
+    Texture2D<float2>   m_motionVector;     // optional: absent pipelines fall back to camera reprojection
     Texture2D<uint2>    m_screenProbeDataHistory;
     RWTexture2D<uint2>  m_screenProbeData;
 
@@ -30,6 +31,8 @@ ShaderResourceGroup PassSrg : SRG_PerPass
 
     uint4 m_screenProbeInfo;
     uint  m_screenProbeTileSize;
+    uint  m_screenProbeHistoryValid; // 0 for one frame after the probe grid changes shape
+    uint  m_hasMotionVector;
 }
 
 #include <WDGlobalGICommon.azsli>
@@ -117,12 +120,32 @@ void MainCS(uint3 dispatch_id : SV_DispatchThreadID)
         normal = DecodeNormalSignedOctahedron(PassSrg::m_normal.Load(int2(bestPixel), 0).rgb);
     }
 
-    // A probe that kept its anchor keeps ageing toward converged; a new or moved one restarts.
+    // Decide once, here, whether this probe may keep its history, and record the answer as the age:
+    // age at maximum means "no usable history", which makes the trace's blend weight 1 and ignores
+    // whatever it reads. Rejecting is the same plane test the upsample uses, run against the probe
+    // that covered this world point last frame - found by reprojection, not by assuming it was this
+    // same tile, because a tile's world point drifts as the camera moves.
     uint reverseAge = WDGI_PROBE_MAX_AGE;
-    if (valid && WDGI_ProbeValid(prevData.x))
+    if (valid && PassSrg::m_screenProbeHistoryValid != 0u)
     {
-        uint prevAge = WDGI_UnpackProbeAge(prevData.x);
-        reverseAge = (prevAge > 0u) ? (prevAge - 1u) : 0u;
+        float2 uv = (float2(bestPixel) + 0.5f) / float2(screenRes);
+        float3 worldPos = WDGI_ReconstructWorldPos(uv, bestDepth);
+        float sceneDepth = distance(worldPos, PassSrg::m_cameraWorldPos.xyz);
+
+        float2 motion = PassSrg::m_motionVector.Load(int3(int2(bestPixel), 0)).xy;
+        uint2 prevTile;
+        if (WDGI_PrevProbeTile(worldPos, uv, motion, PassSrg::m_hasMotionVector != 0u,
+                               screenRes, tileSize, uint2(tilesX, tilesY), prevTile))
+        {
+            uint2 histData = PassSrg::m_screenProbeDataHistory.Load(int3(int2(prevTile), 0)).xy;
+            float3 histWorld;
+            if (WDGI_ProbeWorldFromData(histData, prevTile, tileSize, screenRes, PassSrg::m_prevClipToWorld, histWorld) &&
+                WDGI_ProbeWeight(histWorld, worldPos, normal, sceneDepth) >= 0.01f)
+            {
+                uint prevAge = WDGI_UnpackProbeAge(histData.x);
+                reverseAge = (prevAge > 0u) ? (prevAge - 1u) : 0u;
+            }
+        }
     }
 
     uint2 offset = uint2(bestPixel - tileOrigin);

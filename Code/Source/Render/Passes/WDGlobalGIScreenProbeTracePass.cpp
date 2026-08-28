@@ -37,6 +37,8 @@ namespace AZ
             }
 
             const uint32_t frameIndex = fp->GetClipmap().GetShaderConstants().m_frameIndex;
+            const RHI::AttachmentId motionId = FindPipelineAttachment(AZ::Name("MotionVectorPass"), AZ::Name("MotionVectorOutput"));
+            WDGlobalGIImportAttachment(frameGraph, motionId, RHI::ImageViewDescriptor(), RHI::ScopeAttachmentAccess::Read);
             WDGlobalGIImportAttachment(frameGraph, fp->GetClipmap().GetScreenProbeDataCurrent(frameIndex), WDGlobalGIClipmap::GetScreenProbeDataViewDescriptor(), RHI::ScopeAttachmentAccess::Read);
             WDGlobalGIImportAttachment(frameGraph, fp->GetClipmap().GetRadianceClipmap(), WDGlobalGIClipmap::GetRadianceViewDescriptor(), RHI::ScopeAttachmentAccess::Read);
             WDGlobalGIImportAttachment(frameGraph, fp->GetClipmap().GetSdfClipmap(), WDGlobalGIClipmap::GetSdfViewDescriptor(), RHI::ScopeAttachmentAccess::Read);
@@ -59,6 +61,11 @@ namespace AZ
 
             const uint32_t frameIndex = fp->GetClipmap().GetShaderConstants().m_frameIndex;
             WDGlobalGISetImage(srg, "m_depth", GetInputImageView(context, AZ::Name("Depth")));
+            const RHI::AttachmentId motionId = FindPipelineAttachment(AZ::Name("MotionVectorPass"), AZ::Name("MotionVectorOutput"));
+            const RHI::ImageView* motionView = motionId.IsEmpty() ? nullptr : context.GetImageView(motionId);
+            WDGlobalGISetImage(srg, "m_motionVector", motionView);
+            const uint32_t hasMotionVector = motionView ? 1u : 0u;
+            WDGlobalGISetConstant(srg, "m_hasMotionVector", &hasMotionVector, sizeof(hasMotionVector));
             WDGlobalGISetImage(srg, "m_screenProbeData", fp->GetClipmap().GetScreenProbeDataCurrent(frameIndex));
             const auto& radiance = fp->GetClipmap().GetRadianceClipmap();
             const auto& sdf = fp->GetClipmap().GetSdfClipmap();

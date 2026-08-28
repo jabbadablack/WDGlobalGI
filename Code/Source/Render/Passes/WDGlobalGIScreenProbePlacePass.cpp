@@ -37,6 +37,8 @@ namespace AZ
             }
 
             const uint32_t frameIndex = fp->GetClipmap().GetShaderConstants().m_frameIndex;
+            const RHI::AttachmentId motionId = FindPipelineAttachment(AZ::Name("MotionVectorPass"), AZ::Name("MotionVectorOutput"));
+            WDGlobalGIImportAttachment(frameGraph, motionId, RHI::ImageViewDescriptor(), RHI::ScopeAttachmentAccess::Read);
             WDGlobalGIImportAttachment(frameGraph, fp->GetClipmap().GetScreenProbeDataCurrent(frameIndex),
                 WDGlobalGIClipmap::GetScreenProbeDataViewDescriptor(), RHI::ScopeAttachmentAccess::ReadWrite);
             WDGlobalGIImportAttachment(frameGraph, fp->GetClipmap().GetScreenProbeDataPrev(frameIndex),
@@ -53,6 +55,11 @@ namespace AZ
 
             const uint32_t frameIndex = fp->GetClipmap().GetShaderConstants().m_frameIndex;
             WDGlobalGISetImage(srg, "m_depth", GetInputImageView(context, AZ::Name("Depth")));
+            const RHI::AttachmentId motionId = FindPipelineAttachment(AZ::Name("MotionVectorPass"), AZ::Name("MotionVectorOutput"));
+            const RHI::ImageView* motionView = motionId.IsEmpty() ? nullptr : context.GetImageView(motionId);
+            WDGlobalGISetImage(srg, "m_motionVector", motionView);
+            const uint32_t hasMotionVector = motionView ? 1u : 0u;
+            WDGlobalGISetConstant(srg, "m_hasMotionVector", &hasMotionVector, sizeof(hasMotionVector));
             WDGlobalGISetImage(srg, "m_normal", GetInputImageView(context, AZ::Name("Normal")));
             WDGlobalGISetImage(srg, "m_screenProbeData", fp->GetClipmap().GetScreenProbeDataCurrent(frameIndex));
             WDGlobalGISetImage(srg, "m_screenProbeDataHistory", fp->GetClipmap().GetScreenProbeDataPrev(frameIndex));
@@ -68,6 +75,14 @@ namespace AZ
             const WDGlobalGIClipmap::ScreenProbeGrid grid = WDGlobalGIClipmap::FillScreenProbeInfo(srg, screenW, screenH);
             m_tilesX = grid.m_tilesX;
             m_tilesY = grid.m_tilesY;
+
+            // The probe atlases are allocated once and never cleared, so after the grid changes shape
+            // the history is a differently-tiled image and must not be reprojected into. Telling the
+            // placement pass to withhold history for one frame is cheaper than clearing them.
+            const uint32_t historyValid = (m_tilesX == m_lastTilesX && m_tilesY == m_lastTilesY) ? 1u : 0u;
+            WDGlobalGISetConstant(srg, "m_screenProbeHistoryValid", &historyValid, sizeof(historyValid));
+            m_lastTilesX = m_tilesX;
+            m_lastTilesY = m_tilesY;
         }
 
         void WDGlobalGIScreenProbePlacePass::GetDispatchThreadCount(uint32_t& x, uint32_t& y, uint32_t& z) const

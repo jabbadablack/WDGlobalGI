@@ -25,6 +25,7 @@ ShaderResourceGroup PassSrg : SRG_PerPass
     Texture3D<float4>   m_irradianceClipmap;    // world irradiance cache far-field (#8)
     RWTexture2D<float4> m_screenProbeAtlas;  // octahedral radiance (rgb), a = normalised hit distance
     Texture2D<float4>   m_screenProbeHistory;   // previous-frame atlas for motion reprojection (#2)
+    Texture2D<float2>   m_motionVector;     // optional: absent pipelines fall back to camera reprojection
     Texture2D<uint2>    m_screenProbeDataHistory; // previous-frame probe placement, for history validity
 
     WDGLOBALGI_SHARED_CONSTANTS
@@ -32,6 +33,7 @@ ShaderResourceGroup PassSrg : SRG_PerPass
     uint4 m_screenProbeInfo;   // x = screenW, y = screenH, z = tilesX, w = tilesY
     uint  m_screenProbeTileSize;
     float m_screenProbeTemporal;
+    uint  m_hasMotionVector;
 }
 
 #include <WDGlobalGICommon.azsli>
@@ -64,8 +66,7 @@ void MainCS(uint3 dispatch_id : SV_DispatchThreadID)
     float4 prev = float4(0.0f, 0.0f, 0.0f, 0.0f);
     bool historyValid = false;
     // Distance from the probe to the first surface along this octa direction, normalised by
-    // WDGI_SP_MAXDIST. Storing it in [0,1] keeps the second moment inside fp16's precise band, so
-    // variance = |E[d^2] - E[d]^2| is not swamped by quantisation; 'far'/miss reads as 1 (visible).
+    // WDGI_SP_MAXDIST so it stays in [0,1] and keeps fp16 precision; 'far'/miss reads as 1.
     float storedDist = 1.0f;
 
     if (depth > 0.0f)
@@ -79,40 +80,43 @@ void MainCS(uint3 dispatch_id : SV_DispatchThreadID)
         // the surface, and neighbouring probes on curved geometry get differently oriented ray sets
         // for free.
         float3 probeNormal = WDGI_UnpackProbeNormal(probeData.y);
-        float3 dir = WDGI_HemisphereTexelDir(octa, probeNormal);
+
+        // Offset the ray inside its own texel and walk that offset over time, so the fixed 64
+        // directions stop being identical every frame and for every probe. While the probe is still
+        // converging the sequence is driven by its age, so a newborn probe starts from the beginning
+        // of the sequence and gets maximum stratification when it needs it; once converged it follows
+        // the frame index instead, or the offsets would freeze along with the age.
+        uint revAge = WDGI_UnpackProbeAge(probeData.x);
+        uint sequenceIndex = (revAge != 0u) ? (WDGI_PROBE_MAX_AGE - revAge) : PassSrg::m_frameIndex;
+        float2 rayJitter = WDGI_ProbeRayJitter(tile, octa, sequenceIndex);
+        float3 dir = WDGI_HemisphereTexelDirOffset(octa, probeNormal, rayJitter);
         float cell0 = PassSrg::m_cascadeCenterAndCell[0].w;
         float hitDist;
         radiance = WDGI_TraceVoxelRay(worldPos + dir * (cell0 * 1.5f), dir, hitDist);
         storedDist = saturate((hitDist + cell0 * 1.5f) / WDGI_SP_MAXDIST); // from the probe surface
 
-        // Motion reprojection (#2): project this surface by LAST frame's view-proj to find where the
-        // probe was on screen, and read the history atlas there. This keeps temporal history aligned as
-        // the camera moves (far less ghosting than a fixed-tile in-place blend). The atlas ping-pongs:
-        // we write the "current" atlas and read the "previous" one.
-        float4 prevClip = mul(PassSrg::m_prevWorldToClip, float4(worldPos, 1.0f));
-        if (prevClip.w > 1e-4f)
+        // Where this surface point sat in last frame's probe grid. Whether that history may be used
+        // was already decided by the placement pass and encoded in the probe's age; all this needs to
+        // do is find the address. The atlas ping-pongs: we write "current" and read "previous".
+        float2 motion = PassSrg::m_motionVector.Load(int3(int2(probePixel), 0)).xy;
+        uint2 prevTile;
+        if (WDGI_PrevProbeTile(worldPos, uv, motion, PassSrg::m_hasMotionVector != 0u,
+                               screenRes, tileSize, uint2(tilesX, tilesY), prevTile))
         {
-            float2 prevNdc = prevClip.xy / prevClip.w;
-            float2 prevUv = float2(prevNdc.x * 0.5f + 0.5f, 0.5f - prevNdc.y * 0.5f);
-            if (prevUv.x >= 0.0f && prevUv.x <= 1.0f && prevUv.y >= 0.0f && prevUv.y <= 1.0f)
-            {
-                uint2 prevTile = (uint2)(prevUv * float2(screenRes) / float(tileSize));
-                prevTile = min(prevTile, uint2(tilesX - 1u, tilesY - 1u));
-                // A probe actually existed there last frame; the alpha channel now carries hit
-                // distance rather than a validity flag, so ask the placement data instead.
-                uint2 prevProbe = PassSrg::m_screenProbeDataHistory.Load(int3(int2(prevTile), 0)).xy;
-                if (WDGI_ProbeValid(prevProbe.x))
-                {
-                    uint2 prevAtlasCoord = prevTile * uint(WDGI_SP_OCTA) + octa;
-                    prev = PassSrg::m_screenProbeHistory.Load(int3(prevAtlasCoord, 0));
-                    historyValid = true;
-                }
-            }
+            uint2 prevAtlasCoord = prevTile * uint(WDGI_SP_OCTA) + octa;
+            prev = PassSrg::m_screenProbeHistory.Load(int3(prevAtlasCoord, 0));
+            historyValid = true;
         }
     }
 
-    float hist = historyValid ? PassSrg::m_screenProbeTemporal : 0.0f;
-    float3 blended = lerp(radiance, prev.rgb, hist);
+    // Weight this frame's sample by 1/(n+1) while the probe is young: that is an exact running mean,
+    // so a probe born this frame is correct immediately at one sample instead of fading in over the
+    // whole accumulation window, and a rejected history restarts at n = 0 and therefore ignores what
+    // it read. Once enough frames are in, it settles to the fixed rate the Probe Temporal slider sets.
+    uint accumulated = WDGI_PROBE_MAX_AGE - WDGI_UnpackProbeAge(probeData.x);
+    float converged = 1.0f - PassSrg::m_screenProbeTemporal;
+    float sampleWeight = historyValid ? max(1.0f / float(accumulated + 1u), converged) : 1.0f;
+    float3 blended = lerp(prev.rgb, radiance, sampleWeight);
 
     // Alpha carries this ray's normalised hit distance. It costs nothing here and is what the
     // cross-probe spatial filter needs to tell a near-field occluder from a distant one.

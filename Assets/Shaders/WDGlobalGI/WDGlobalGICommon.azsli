@@ -23,6 +23,36 @@ static const float WDGI_TWO_PI = 6.28318530718f;
 #define WDGI_SP_MAXDIST 200.0f // probe hit distances are stored normalised by this (fp16 headroom)
 
 // ---------------------------------------------------------------------------------------------
+// RNG + ray sampling
+// ---------------------------------------------------------------------------------------------
+
+uint WDGI_Hash(uint x)
+{
+    x ^= x >> 16;
+    x *= 0x7feb352du;
+    x ^= x >> 15;
+    x *= 0x846ca68bu;
+    x ^= x >> 16;
+    return x;
+}
+
+float WDGI_RandFromUint(uint x)
+{
+    return (WDGI_Hash(x) & 0x00ffffffu) / 16777216.0f;
+}
+
+//! Fibonacci-sphere direction i of n, jittered by a per-probe seed to decorrelate frames.
+float3 WDGI_SphereDir(uint i, uint n, uint seed)
+{
+    float jitter = WDGI_RandFromUint(seed);
+    float t = (float(i) + jitter) / float(max(n, 1u));
+    float phi = WDGI_TWO_PI * frac(float(i) * 0.61803398875f + WDGI_RandFromUint(seed + 7u));
+    float cosTheta = 1.0f - 2.0f * t;
+    float sinTheta = sqrt(saturate(1.0f - cosTheta * cosTheta));
+    return float3(cos(phi) * sinTheta, sin(phi) * sinTheta, cosTheta);
+}
+
+// ---------------------------------------------------------------------------------------------
 // Equal-area octahedral mapping (unit direction <-> [0,1]^2), after Clarberg 2008 - the same
 // mapping daGI2 and Lumen use. Equal-area matters: every texel then subtends the identical solid
 // angle 4*PI/res^2, which is what makes the flat 4*PI/N weight in the SH projection correct and
@@ -97,12 +127,17 @@ void WDGI_ProbeTangentFrame(float3 n, out float3 tangent, out float3 bitangent)
     bitangent = cross(n, tangent);
 }
 
-float3 WDGI_HemisphereTexelDir(uint2 octa, float3 n)
+float3 WDGI_HemisphereTexelDirOffset(uint2 octa, float3 n, float2 offset)
 {
-    float3 local = WDGI_HemiOctaDecode((float2(octa) + 0.5f) / float(WDGI_SP_OCTA));
+    float3 local = WDGI_HemiOctaDecode((float2(octa) + 0.5f + offset) / float(WDGI_SP_OCTA));
     float3 tangent, bitangent;
     WDGI_ProbeTangentFrame(n, tangent, bitangent);
     return local.x * tangent + local.y * bitangent + local.z * n;
+}
+
+float3 WDGI_HemisphereTexelDir(uint2 octa, float3 n)
+{
+    return WDGI_HemisphereTexelDirOffset(octa, n, float2(0.0f, 0.0f));
 }
 
 float2 WDGI_HemisphereEncode(float3 dir, float3 n)
@@ -184,6 +219,30 @@ float3 WDGI_SHEvalIrradiance(float3 coeffs[9], float3 n)
     return max(e, float3(0.0f, 0.0f, 0.0f));
 }
 
+// How much a probe should contribute to this pixel, following daGI2's sp_upsample_weights.hlsl.
+// The dominant term is the probe's distance from the shading point's tangent plane, divided by the
+// shading point's depth so the tolerance scales with distance; the weight falls below 0.01 once the
+// probe is about 2.6% of the depth off the plane. The secondary, much gentler relative-depth term is
+// what separates two probes sitting on *different* surfaces that happen to share a plane - a wall
+// corner seen at a glancing angle. Plane distance alone blends across that corner; depth alone kills
+// the bilinear on a single flat wall and brings the probe lattice back, so both are needed.
+// There is deliberately no separate normal test: the normal already defines the plane, and a probe on
+// a differently-oriented surface is rejected by the plane distance.
+float WDGI_ProbeWeight(float3 probeWorld, float3 worldPos, float3 worldNormal, float sceneDepth)
+{
+    const float depthExp = -10000.0f;
+    const float depthTermExp = -3.0f;
+
+    float invDepth = 1.0f / max(sceneDepth, 1e-4f);
+    float planeDist = dot(probeWorld - worldPos, worldNormal) * invDepth;
+    float relDepth = planeDist * planeDist;
+
+    float probeDepth = distance(probeWorld, PassSrg::m_cameraWorldPos.xyz);
+    relDepth += (depthTermExp / depthExp) * abs(probeDepth - sceneDepth) * invDepth;
+
+    return exp2(depthExp * relDepth);
+}
+
 // ---------------------------------------------------------------------------------------------
 // Screen-probe placement data. Two uints per probe, following daGI2's screen_probes_encoding.hlsl:
 //   .x  bits  0..23  anchor depth, the top 24 bits of the raw depth float (exact, free to pack)
@@ -245,6 +304,76 @@ uint2 WDGI_ProbeAnchorPixel(uint2 probeData, uint2 tile, uint tileSize, uint2 sc
 {
     uint2 offset = min(WDGI_UnpackProbeOffset(probeData.y), uint2(tileSize - 1u, tileSize - 1u));
     return min(tile * tileSize + offset, screenRes - uint2(1, 1));
+}
+
+//! Reconstruct a probe's world position from its packed data. 'clipToWorld' is the inverse
+//! view-projection of the frame that probe data belongs to.
+bool WDGI_ProbeWorldFromData(
+    uint2 probeData, uint2 tile, uint tileSize, uint2 screenRes, float4x4 clipToWorld, out float3 worldPos)
+{
+    worldPos = float3(0.0f, 0.0f, 0.0f);
+    if (!WDGI_ProbeValid(probeData.x))
+    {
+        return false;
+    }
+    uint2 px = WDGI_ProbeAnchorPixel(probeData, tile, tileSize, screenRes);
+    float2 uv = (float2(px) + 0.5f) / float2(screenRes);
+    float4 clip = float4(uv.x * 2.0f - 1.0f, (1.0f - uv.y) * 2.0f - 1.0f, WDGI_UnpackProbeDepth(probeData.x), 1.0f);
+    float4 h = mul(clipToWorld, clip);
+    if (abs(h.w) < 1e-6f)
+    {
+        return false;
+    }
+    worldPos = h.xyz / h.w;
+    return true;
+}
+
+//! Which probe tile this surface point occupied in the previous frame, if it was on screen at all.
+//! With a motion vector the answer follows moving geometry as well as the camera; without one it
+//! falls back to reprojecting through last frame's view-projection, which only tracks the camera.
+//! The caller samples the motion vector because that texture is per-pass, not part of the shared set.
+bool WDGI_PrevProbeTile(
+    float3 worldPos, float2 anchorUv, float2 motionVector, bool hasMotionVector,
+    uint2 screenRes, uint tileSize, uint2 tileCount, out uint2 prevTile)
+{
+    prevTile = uint2(0, 0);
+
+    float2 uv;
+    if (hasMotionVector)
+    {
+        // Motion vectors store the direction of movement, so the history sits the other way.
+        uv = anchorUv - motionVector;
+    }
+    else
+    {
+        float4 clip = mul(PassSrg::m_prevWorldToClip, float4(worldPos, 1.0f));
+        if (clip.w <= 1e-4f)
+        {
+            return false;
+        }
+        float2 ndc = clip.xy / clip.w;
+        uv = float2(ndc.x * 0.5f + 0.5f, 0.5f - ndc.y * 0.5f);
+    }
+
+    if (uv.x < 0.0f || uv.x > 1.0f || uv.y < 0.0f || uv.y > 1.0f)
+    {
+        return false;
+    }
+    prevTile = min((uint2)(uv * float2(screenRes) / float(tileSize)), tileCount - uint2(1, 1));
+    return true;
+}
+
+//! Sub-texel ray offset, confined to the texel's own cell. Confinement is what makes the temporal
+//! blend an unbiased estimator of the cell's mean radiance rather than a blur across cells, and
+//! equal-area octahedral is what lets that hold without a per-texel weight. The spatial hash
+//! decorrelates neighbouring texels; the R2 sequence walks the samples over time.
+float2 WDGI_ProbeRayJitter(uint2 tile, uint2 octa, uint sequenceIndex)
+{
+    uint seed = (tile.y * 4096u + tile.x) * uint(WDGI_SP_OCTA * WDGI_SP_OCTA)
+              + octa.y * uint(WDGI_SP_OCTA) + octa.x;
+    float2 base = float2(WDGI_RandFromUint(seed), WDGI_RandFromUint(seed + 0x9E3779B9u));
+    const float2 r2 = float2(0.7548776662f, 0.5698402910f);
+    return frac(base + r2 * float(sequenceIndex)) - 0.5f;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -339,36 +468,6 @@ float3 WDGI_EvalAmbientCube(float3 faceColors[WDGLOBALGI_FACE_COUNT], float3 n)
     float3 cY = (n.y >= 0.0f) ? faceColors[2] : faceColors[3];
     float3 cZ = (n.z >= 0.0f) ? faceColors[4] : faceColors[5];
     return nSq.x * cX + nSq.y * cY + nSq.z * cZ;
-}
-
-// ---------------------------------------------------------------------------------------------
-// RNG + ray sampling
-// ---------------------------------------------------------------------------------------------
-
-uint WDGI_Hash(uint x)
-{
-    x ^= x >> 16;
-    x *= 0x7feb352du;
-    x ^= x >> 15;
-    x *= 0x846ca68bu;
-    x ^= x >> 16;
-    return x;
-}
-
-float WDGI_RandFromUint(uint x)
-{
-    return (WDGI_Hash(x) & 0x00ffffffu) / 16777216.0f;
-}
-
-//! Fibonacci-sphere direction i of n, jittered by a per-probe seed to decorrelate frames.
-float3 WDGI_SphereDir(uint i, uint n, uint seed)
-{
-    float jitter = WDGI_RandFromUint(seed);
-    float t = (float(i) + jitter) / float(max(n, 1u));
-    float phi = WDGI_TWO_PI * frac(float(i) * 0.61803398875f + WDGI_RandFromUint(seed + 7u));
-    float cosTheta = 1.0f - 2.0f * t;
-    float sinTheta = sqrt(saturate(1.0f - cosTheta * cosTheta));
-    return float3(cos(phi) * sinTheta, sin(phi) * sinTheta, cosTheta);
 }
 
 //! Cheap analytic sky used when a ray escapes the voxel cascades.

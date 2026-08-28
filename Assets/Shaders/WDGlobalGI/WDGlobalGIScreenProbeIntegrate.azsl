@@ -59,30 +59,6 @@ bool ProbeWorldPos(int2 tile, uint2 screenRes, out float3 worldPos)
     return true;
 }
 
-// How much a probe should contribute to this pixel, following daGI2's sp_upsample_weights.hlsl.
-// The dominant term is the probe's distance from the shading point's tangent plane, divided by the
-// shading point's depth so the tolerance scales with distance; the weight falls below 0.01 once the
-// probe is about 2.6% of the depth off the plane. The secondary, much gentler relative-depth term is
-// what separates two probes sitting on *different* surfaces that happen to share a plane - a wall
-// corner seen at a glancing angle. Plane distance alone blends across that corner; depth alone kills
-// the bilinear on a single flat wall and brings the probe lattice back, so both are needed.
-// There is deliberately no separate normal test: the normal already defines the plane, and a probe on
-// a differently-oriented surface is rejected by the plane distance.
-float ProbeWeight(float3 probeWorld, float3 worldPos, float3 worldNormal, float sceneDepth)
-{
-    const float depthExp = -10000.0f;
-    const float depthTermExp = -3.0f;
-
-    float invDepth = 1.0f / max(sceneDepth, 1e-4f);
-    float planeDist = dot(probeWorld - worldPos, worldNormal) * invDepth;
-    float relDepth = planeDist * planeDist;
-
-    float probeDepth = distance(probeWorld, PassSrg::m_cameraWorldPos.xyz);
-    relDepth += (depthTermExp / depthExp) * abs(probeDepth - sceneDepth) * invDepth;
-
-    return exp2(depthExp * relDepth);
-}
-
 VSOutput MainVS(VSInput input)
 {
     VSOutput OUT;
@@ -147,7 +123,7 @@ PSOutput MainPS(VSOutput IN)
             {
                 // Floored, so a pixel whose four probes all sit off its plane - a thin feature the
                 // probe grid straddles - degrades to plain bilinear rather than losing its GI.
-                geometric = max(1e-5f, ProbeWeight(probeWorld, worldPos, normal, sceneDepth));
+                geometric = max(1e-5f, WDGI_ProbeWeight(probeWorld, worldPos, normal, sceneDepth));
             }
 
             float w = bilinear * geometric;

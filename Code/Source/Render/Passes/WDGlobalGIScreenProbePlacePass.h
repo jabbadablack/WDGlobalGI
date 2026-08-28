@@ -36,6 +36,8 @@ namespace AZ
 
             uint32_t m_tilesX = 1;
             uint32_t m_tilesY = 1;
+            uint32_t m_lastTilesX = 0;
+            uint32_t m_lastTilesY = 0;
         };
     } // namespace Render
 } // namespace AZ

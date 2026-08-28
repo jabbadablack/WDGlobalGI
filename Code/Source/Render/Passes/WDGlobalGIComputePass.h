@@ -30,6 +30,16 @@ namespace AZ
             RHI::ScopeAttachmentAccess access,
             RHI::ScopeAttachmentStage stage = RHI::ScopeAttachmentStage::ComputeShader);
 
+        //! Declare use of an attachment another pass owns. Unlike the overload above there is nothing
+        //! to import: the owning pass already registered it, so an id that is not in the database
+        //! simply means that pass is absent from this pipeline and the caller must cope without it.
+        void WDGlobalGIImportAttachment(
+            RHI::FrameGraphInterface frameGraph,
+            const RHI::AttachmentId& attachmentId,
+            const RHI::ImageViewDescriptor& viewDesc,
+            RHI::ScopeAttachmentAccess access,
+            RHI::ScopeAttachmentStage stage = RHI::ScopeAttachmentStage::ComputeShader);
+
         //! Shared base for the WDGlobalGI compute passes (SceneInject, Propagate, Apply).
         //!
         //! It owns a single compute shader + pass SRG and runs one dispatch per frame, following the
@@ -52,6 +62,10 @@ namespace AZ
 
             //! Helper: fetch the image view for a connected pipeline input slot from the compile context.
             const RHI::ImageView* GetInputImageView(const RHI::FrameGraphCompileContext& context, const AZ::Name& slotName);
+
+            //! Resolve an attachment owned by another pass in this pipeline, by pass and slot name.
+            //! Returns an empty id when that pass is not present, which callers must treat as optional.
+            RHI::AttachmentId FindPipelineAttachment(const AZ::Name& passName, const AZ::Name& slotName) const;
 
             // --- Subclass hooks --------------------------------------------------------------------
 

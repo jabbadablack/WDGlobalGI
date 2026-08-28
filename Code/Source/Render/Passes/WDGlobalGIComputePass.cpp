@@ -13,6 +13,8 @@
 #include <Atom/RHI/FrameGraphInterface.h>
 #include <Atom/RHI/FrameGraphCompileContext.h>
 #include <Atom/RHI/FrameGraphExecuteContext.h>
+#include <Atom/RPI.Public/Pass/PassFilter.h>
+#include <Atom/RPI.Public/Pass/PassSystemInterface.h>
 #include <Atom/RPI.Public/RenderPipeline.h>
 #include <Atom/RPI.Public/RPIUtils.h>
 #include <Atom/RPI.Public/Scene.h>
@@ -42,6 +44,44 @@ namespace AZ
             desc.m_imageViewDescriptor = viewDesc;
             desc.m_loadStoreAction.m_loadAction = RHI::AttachmentLoadAction::Load;
             frameGraph.UseShaderAttachment(desc, access, stage);
+        }
+
+        void WDGlobalGIImportAttachment(
+            RHI::FrameGraphInterface frameGraph,
+            const RHI::AttachmentId& attachmentId,
+            const RHI::ImageViewDescriptor& viewDesc,
+            RHI::ScopeAttachmentAccess access,
+            RHI::ScopeAttachmentStage stage)
+        {
+            if (attachmentId.IsEmpty() || !frameGraph.GetAttachmentDatabase().IsAttachmentValid(attachmentId))
+            {
+                return;
+            }
+            RHI::ImageScopeAttachmentDescriptor desc;
+            desc.m_attachmentId = attachmentId;
+            desc.m_imageViewDescriptor = viewDesc;
+            desc.m_loadStoreAction.m_loadAction = RHI::AttachmentLoadAction::Load;
+            frameGraph.UseShaderAttachment(desc, access, stage);
+        }
+
+        RHI::AttachmentId WDGlobalGIComputePass::FindPipelineAttachment(const AZ::Name& passName, const AZ::Name& slotName) const
+        {
+            if (!m_pipeline)
+            {
+                return RHI::AttachmentId{};
+            }
+            RPI::PassFilter filter = RPI::PassFilter::CreateWithPassName(passName, m_pipeline);
+            RPI::Pass* pass = RPI::PassSystemInterface::Get()->FindFirstPass(filter);
+            if (!pass)
+            {
+                return RHI::AttachmentId{};
+            }
+            RPI::PassAttachmentBinding* binding = pass->FindAttachmentBinding(slotName);
+            if (!binding || !binding->GetAttachment())
+            {
+                return RHI::AttachmentId{};
+            }
+            return binding->GetAttachment()->GetAttachmentId();
         }
 
         WDGlobalGIComputePass::WDGlobalGIComputePass(
