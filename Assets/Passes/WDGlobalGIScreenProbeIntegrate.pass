@@ -20,6 +20,12 @@
                     "ScopeAttachmentUsage": "Shader"
                 },
                 {
+                    "Name": "SpecularF0Input",
+                    "SlotType": "Input",
+                    "ShaderInputName": "m_specularF0",
+                    "ScopeAttachmentUsage": "Shader"
+                },
+                {
                     "Name": "Depth",
                     "SlotType": "Input",
                     "ShaderInputName": "m_depth",

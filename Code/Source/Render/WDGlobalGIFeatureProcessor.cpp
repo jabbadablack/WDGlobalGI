@@ -105,7 +105,7 @@ namespace AZ
                         ->DataElement(AZ::Edit::UIHandlers::Default, &WDGlobalGIConfiguration::m_skyIntensity, "Sky Intensity", "Ambient sky intensity")
                         ->DataElement(AZ::Edit::UIHandlers::CheckBox, &WDGlobalGIConfiguration::m_anisotropic, "Anisotropic Voxels", "Store/sample 6-direction radiance so thin walls don't leak light (~25 MB extra).")
                         ->DataElement(AZ::Edit::UIHandlers::CheckBox, &WDGlobalGIConfiguration::m_useRadianceCache, "Radiance Cache", "Escaped/long GI rays reuse the cached world irradiance as far-field light (extra bounce).")
-                        ->DataElement(AZ::Edit::UIHandlers::Slider, &WDGlobalGIConfiguration::m_specularRoughness, "Specular Roughness", "Glossy reflection cone width (0 = sharp mirror, 1 = blurry). Screen probes only.")
+                        ->DataElement(AZ::Edit::UIHandlers::Slider, &WDGlobalGIConfiguration::m_specularRoughness, "Specular Roughness Bias", "Added to the material's own roughness for screen-probe specular (0 = use the material unchanged, higher = blurrier).")
                             ->Attribute(AZ::Edit::Attributes::Min, 0.0f)
                             ->Attribute(AZ::Edit::Attributes::Max, 1.0f)
                         ->DataElement(AZ::Edit::UIHandlers::Slider, &WDGlobalGIConfiguration::m_screenProbeBlur, "Screen Probe Blur", "Depth-aware spatial denoise of the screen-probe GI (0 = off, 1 = full). The main noise fix.")

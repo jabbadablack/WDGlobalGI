@@ -7,7 +7,8 @@
  * WDGlobalGI screen-probe integrate (audit #2 + #7 specular). Per lit pixel:
  *  - Diffuse: bilinearly interpolate the 4 surrounding probes' irradiance SH, each weighted by how
  *    close that probe sits to the shading point's tangent plane, evaluate for the pixel normal.
- *  - Specular: sample the nearest probe's octahedral radiance in the reflection direction -> glossy GI.
+ *  - Specular: one stochastically chosen probe of the same four, sampled along the reflection
+ *    direction and bounded to a plausible multiple of the ambient -> glossy GI.
  * Add-blended into the lighting target. Brightness matches the clipmap composite (no extra /PI - the
  * BRDF /PI cancels the cosine-integral PI).
  */
@@ -23,6 +24,7 @@ ShaderResourceGroup PassSrg : SRG_PerPass
 {
     Texture2DMS<float4> m_albedo;
     Texture2DMS<float4> m_normal;
+    Texture2DMS<float4> m_specularF0;   // rgb = F0, a = roughness
     Texture2DMS<float>  m_depth;
     Texture2D<uint2>    m_screenProbeData;   // per-probe anchor + normal from the placement pass
     Texture2D<float4>   m_screenProbeSH;     // 9 irradiance-SH coeffs per probe (diffuse)
@@ -108,6 +110,9 @@ PSOutput MainPS(VSOutput IN)
     }
     float weightSum = 0.0f;
 
+    int2 cornerTile[4];
+    float cornerWeight[4];
+
     [unroll] for (int j = 0; j < 2; ++j)
     {
         [unroll] for (int i = 0; i < 2; ++i)
@@ -127,6 +132,8 @@ PSOutput MainPS(VSOutput IN)
             }
 
             float w = bilinear * geometric;
+            cornerTile[j * 2 + i] = tile;
+            cornerWeight[j * 2 + i] = w;
             if (w > 0.0f)
             {
                 uint2 shBase = uint2(uint(tile.x) * uint(WDGI_SP_COEFFS), uint(tile.y));
@@ -140,6 +147,7 @@ PSOutput MainPS(VSOutput IN)
     }
 
     float3 diffuseGI = float3(0, 0, 0);
+    float3 specularGI = float3(0, 0, 0);
     if (weightSum > 1e-4f)
     {
         float invW = 1.0f / weightSum;
@@ -151,45 +159,53 @@ PSOutput MainPS(VSOutput IN)
         float3 irradiance = WDGI_SHEvalIrradiance(coeffs, normal);
         // L_out = (albedo/PI) * E (E is the cosine-convolved SH irradiance).
         diffuseGI = (albedo / WDGI_PI) * irradiance * PassSrg::m_giIntensity;
-    }
 
-    // Glossy specular: gather the nearest probe's octahedral radiance in a roughness-driven cone around
-    // the reflection direction (5 taps: centre + a tangent-plane ring whose spread scales with
-    // m_specularRoughness). A sharp mirror collapses the ring onto the reflection ray; a rough surface
-    // widens it, blurring the reflection. Single-probe (no per-pixel roughness gbuffer) - the cone width
-    // is a global slider, which is a pragmatic step up from the previous single tap.
-    float3 specularGI = float3(0, 0, 0);
-    if (PassSrg::m_screenProbeSpecular > 0.0f)
-    {
-        int2 nearTile = clamp(int2(round(probeCoord)), int2(0, 0), maxTile);
-        float3 nearNormal = WDGI_UnpackProbeNormal(PassSrg::m_screenProbeData.Load(int3(nearTile, 0)).y);
-        float3 viewDir = normalize(WDGI_ReconstructWorldPos(IN.m_texCoord, 1.0f) - worldPos);
-        float3 reflDir = reflect(-viewDir, normal);
-
-        // Tangent frame around the reflection direction for the cone offsets.
-        float3 up = abs(reflDir.z) < 0.99f ? float3(0.0f, 0.0f, 1.0f) : float3(1.0f, 0.0f, 0.0f);
-        float3 tangent = normalize(cross(up, reflDir));
-        float3 bitangent = cross(reflDir, tangent);
-        float spread = saturate(PassSrg::m_specularRoughness) * 0.6f;
-
-        const float2 coneOffsets[5] =
+        if (PassSrg::m_screenProbeSpecular > 0.0f)
         {
-            float2(0.0f, 0.0f), float2(1.0f, 0.0f), float2(-1.0f, 0.0f), float2(0.0f, 1.0f), float2(0.0f, -1.0f)
-        };
-        float3 reflRadiance = float3(0.0f, 0.0f, 0.0f);
-        int2 octaBase = nearTile * int(WDGI_SP_OCTA);
-        [unroll] for (int s = 0; s < 5; ++s)
-        {
-            float3 d = normalize(reflDir + (tangent * coneOffsets[s].x + bitangent * coneOffsets[s].y) * spread);
-            WDGI_OctaTaps taps = WDGI_HemisphereBilinearTaps(d, nearNormal);
+            float4 specularF0 = PassSrg::m_specularF0.Load(coords, 0);
+            float roughness = saturate(specularF0.a + PassSrg::m_specularRoughness);
+
+            float3 viewDir = normalize(WDGI_ReconstructWorldPos(IN.m_texCoord, 1.0f) - worldPos);
+            float NoV = saturate(dot(normal, viewDir));
+            float3 reflDir = reflect(-viewDir, normal);
+
+            // Pick one of the same four probes at random, with probability proportional to the weight
+            // it already earned above. One tap instead of four, the same answer in expectation, and the
+            // tile boundary turns into per-pixel noise instead of a visible seam - which is what the
+            // nearest-probe round() used to print across the screen.
+            float rand = WDGI_RandFromUint(WDGI_Hash(coords.x + coords.y * 65536u) + PassSrg::m_frameIndex);
+            float pickT = rand * weightSum;
+            float acc0 = cornerWeight[0];
+            float acc1 = acc0 + cornerWeight[1];
+            float acc2 = acc1 + cornerWeight[2];
+            int pick = (pickT < acc0) ? 0 : ((pickT < acc1) ? 1 : ((pickT < acc2) ? 2 : 3));
+
+            int2 specTile = cornerTile[pick];
+            float3 specNormal = WDGI_UnpackProbeNormal(PassSrg::m_screenProbeData.Load(int3(specTile, 0)).y);
+            int2 octaBase = specTile * int(WDGI_SP_OCTA);
+
+            float3 sharp = float3(0.0f, 0.0f, 0.0f);
+            WDGI_OctaTaps taps = WDGI_HemisphereBilinearTaps(reflDir, specNormal);
             [unroll] for (int t = 0; t < 4; ++t)
             {
-                reflRadiance += PassSrg::m_screenProbeAtlas.Load(int3(octaBase + taps.m_texel[t], 0)).rgb * taps.m_weight[t];
+                sharp += PassSrg::m_screenProbeAtlas.Load(int3(octaBase + taps.m_texel[t], 0)).rgb * taps.m_weight[t];
             }
-        }
-        reflRadiance *= 0.2f; // average of 5 taps
 
-        specularGI = reflRadiance * PassSrg::m_screenProbeSpecular;
+            // Past roughly 0.4 the lobe is wider than 64 directions can describe, so cross-fade to the
+            // cosine-convolved irradiance along the reflection direction: already filtered, already
+            // seam-free, and a better estimate of a wide lobe than a sharp octahedral tap.
+            float3 wide = WDGI_SHEvalIrradiance(coeffs, reflDir) / WDGI_PI;
+            float3 reflRadiance = lerp(sharp, wide, saturate((roughness - 0.4f) / 0.3f));
+
+            // Roughness-aware Schlick: a rough surface must not keep a mirror's grazing response.
+            float3 F0 = specularF0.rgb;
+            float3 fresnel = F0 + (max(1.0f.xxx - roughness, F0) - F0) * pow(1.0f - NoV, 5.0f);
+
+            float maxScale = WDGI_MaxSpecularScale(roughness, NoV, 1.0f, 3.0f);
+            reflRadiance = WDGI_BoundProbeSpecular(reflRadiance, irradiance / WDGI_PI, maxScale);
+
+            specularGI = reflRadiance * fresnel * PassSrg::m_screenProbeSpecular * PassSrg::m_giIntensity;
+        }
     }
 
     OUT.m_color = float4(diffuseGI + specularGI, 1.0f);

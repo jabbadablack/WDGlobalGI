@@ -249,6 +249,39 @@ float WDGI_ProbeWeight(float3 probeWorld, float3 worldPos, float3 worldNormal, f
 }
 
 // ---------------------------------------------------------------------------------------------
+// Plausible bound on probe specular, after Hooker's "Volumetric Global Illumination at Treyarch"
+// (SIGGRAPH 2016) as daGI2 applies it. A probe's radiance map is not pre-integrated per roughness,
+// so a bright source that a wide lobe should have averaged down stays sharp in the sample and rough
+// surfaces come out implausibly bright. The bound leaves specular untouched while it is within a
+// plausible multiple of the ambient at that roughness, then compresses only the excess.
+// ---------------------------------------------------------------------------------------------
+
+float WDGI_Luminance(float3 c)
+{
+    return dot(c, float3(0.2126f, 0.7152f, 0.0722f));
+}
+
+float WDGI_MaxSpecularScale(float roughness, float NoV, float minScale, float probeMipCount)
+{
+    float mip = roughness * probeMipCount;
+    float v = max(minScale,
+              max(9.13681f * exp2(6.85741f - 2.0f * mip) * NoV,
+                  9.70809f * exp2(7.085f - mip - 0.403181f * mip * mip) * NoV));
+    return min(v, 32.0f);
+}
+
+float3 WDGI_BoundProbeSpecular(float3 spec, float3 ambient, float maxScale)
+{
+    float lumA = max(WDGI_Luminance(ambient), 1e-4f);
+    float lumS = max(WDGI_Luminance(spec), 1e-6f);
+    float m = maxScale * lumA;
+    float t = min(1.26816f * lumA, 0.5f * m);
+    float over = max(lumS - t, 0.0f);
+    float range = max(m - t, 1e-6f);
+    return spec * ((min(lumS, t) + over * range / (over + range)) / lumS);
+}
+
+// ---------------------------------------------------------------------------------------------
 // Screen-probe placement data. Two uints per probe, following daGI2's screen_probes_encoding.hlsl:
 //   .x  bits  0..23  anchor depth, the top 24 bits of the raw depth float (exact, free to pack)
 //       bit      24  valid (the anchor pixel has a surface)

@@ -18,6 +18,11 @@
                     "ScopeAttachmentUsage": "Shader"
                 },
                 {
+                    "Name": "SpecularF0Input",
+                    "SlotType": "Input",
+                    "ScopeAttachmentUsage": "Shader"
+                },
+                {
                     "Name": "DepthStencilInputOutput",
                     "SlotType": "InputOutput",
                     "ScopeAttachmentUsage": "DepthStencil"
@@ -100,6 +105,7 @@
                     "Connections": [
                         { "LocalSlot": "AlbedoInput", "AttachmentRef": { "Pass": "Parent", "Attachment": "AlbedoInput" } },
                         { "LocalSlot": "NormalInput", "AttachmentRef": { "Pass": "Parent", "Attachment": "NormalInput" } },
+                        { "LocalSlot": "SpecularF0Input", "AttachmentRef": { "Pass": "Parent", "Attachment": "SpecularF0Input" } },
                         { "LocalSlot": "Depth",       "AttachmentRef": { "Pass": "Parent", "Attachment": "DepthStencilInputOutput" } },
                         { "LocalSlot": "DiffuseInputOutput", "AttachmentRef": { "Pass": "Parent", "Attachment": "DiffuseInputOutput" } }
                     ]

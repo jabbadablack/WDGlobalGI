@@ -328,7 +328,7 @@ namespace AZ
                 bool advChanged = false;
                 advChanged |= ImGui::Checkbox("Anisotropic Voxels (no thin-wall leaks)", &config.m_anisotropic);
                 advChanged |= ImGui::Checkbox("Radiance Cache (far-field bounce)", &config.m_useRadianceCache);
-                advChanged |= ImGui::SliderFloat("Specular Roughness (cone)", &config.m_specularRoughness, 0.0f, 1.0f);
+                advChanged |= ImGui::SliderFloat("Specular Roughness Bias", &config.m_specularRoughness, 0.0f, 1.0f);
                 advChanged |= ImGui::SliderFloat("Screen Probe Blur (denoise)", &config.m_screenProbeBlur, 0.0f, 1.0f);
                 advChanged |= ImGui::SliderFloat("Cascade Blend (anti-seam)", &config.m_cascadeBlend, 0.0f, 1.0f);
                 advChanged |= ImGui::Checkbox("Volumetric GI (fog in-scatter)", &config.m_useVolumetric);
@@ -340,7 +340,7 @@ namespace AZ
                     fp->SetConfiguration(config);
                 }
                 ImGui::TextWrapped("Anisotropic: 6-direction voxel radiance (~25 MB). Radiance Cache: escaped rays reuse "
-                                   "the cached world irradiance. Specular Roughness: glossy cone width. Volumetric: GI "
+                                   "the cached world irradiance. Specular Roughness Bias: added to material roughness. Volumetric: GI "
                                    "scattered through fog (additive). All default off; turn on per scene.");
 
                 ImGui::Separator();

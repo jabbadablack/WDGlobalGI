@@ -163,9 +163,10 @@ namespace AZ
             //! irradiance clipmap as a far-field / extra-bounce term instead of flat sky. Off by default.
             bool m_useRadianceCache = false;
 
-            //! Glossy-reflection cone width for the screen-probe specular term (0 = sharp mirror,
-            //! 1 = very blurry). Widens the octahedral gather. Only used when screen probes are on.
-            float m_specularRoughness = 0.4f;
+            //! Additive bias on the per-pixel roughness used for screen-probe specular. The roughness
+            //! itself now comes from the SpecularF0 G-buffer, so this only nudges it: positive blurs
+            //! the reflection, 0 leaves the material's own value alone. Screen probes only.
+            float m_specularRoughness = 0.0f;
 
             //! Spatial denoise of the screen-probe irradiance SH: a depth-aware 3x3 blur across probes
             //! before integration (0 = off/passthrough, 1 = full blur). The main screen-probe noise fix.
