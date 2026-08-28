@@ -23,6 +23,7 @@
     float4 m_sunDirectionIntensity;  /* xyz = direction toward surface, w = intensity */             \
     float4 m_sunColor;               /* rgb */                                                       \
     float4 m_skyColorIntensity;      /* rgb = colour, a = intensity */                               \
+    float4 m_cameraWorldPos;         /* xyz = camera world position, w unused */                     \
     row_major float4x4 m_clipToWorld; /* inverse view-projection, for depth->world reconstruction */ \
     float  m_giIntensity;                                                                            \
     float  m_hysteresis;                                                                             \

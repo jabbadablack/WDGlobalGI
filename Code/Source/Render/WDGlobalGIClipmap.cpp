@@ -149,9 +149,6 @@ namespace AZ
             m_screenProbeAtlasHistory = CreateAtlasImage(
                 WDGlobalGILimits::ScreenProbeAtlasMaxWidth, WDGlobalGILimits::ScreenProbeAtlasMaxHeight,
                 ClipmapFormat, "WDGlobalGI_ScreenProbeAtlasHistory");
-            m_screenProbeDepthAtlas = CreateAtlasImage(
-                WDGlobalGILimits::ScreenProbeAtlasMaxWidth, WDGlobalGILimits::ScreenProbeAtlasMaxHeight,
-                ClipmapFormat, "WDGlobalGI_ScreenProbeDepthAtlas");
             m_screenProbeData = CreateAtlasImage(
                 WDGlobalGILimits::ScreenProbeDataMaxWidth, WDGlobalGILimits::ScreenProbeDataMaxHeight,
                 ScreenProbeDataFormat, "WDGlobalGI_ScreenProbeData");
@@ -180,7 +177,6 @@ namespace AZ
             m_anisoRadianceClipmap = nullptr;
             m_screenProbeAtlasHistory = nullptr;
             m_volumetricFroxel = nullptr;
-            m_screenProbeDepthAtlas = nullptr;
             m_screenProbeSHBlurred = nullptr;
             m_screenProbeData = nullptr;
             m_screenProbeDataHistory = nullptr;
@@ -238,6 +234,10 @@ namespace AZ
 
                 cellSize *= 3.0f; // nested clipmap: cell size triples per cascade.
             }
+
+            m_constants.m_cameraWorldPos[0] = static_cast<float>(cameraPosition.GetX());
+            m_constants.m_cameraWorldPos[1] = static_cast<float>(cameraPosition.GetY());
+            m_constants.m_cameraWorldPos[2] = static_cast<float>(cameraPosition.GetZ());
 
             // Lighting environment (config-driven in v1).
             AZ::Vector3 sunDir = config.m_sunDirection;
@@ -387,6 +387,7 @@ namespace AZ
             setRaw("m_sunDirectionIntensity", m_constants.m_sunDirectionIntensity, sizeof(m_constants.m_sunDirectionIntensity));
             setRaw("m_sunColor", m_constants.m_sunColor, sizeof(m_constants.m_sunColor));
             setRaw("m_skyColorIntensity", m_constants.m_skyColorIntensity, sizeof(m_constants.m_skyColorIntensity));
+            setRaw("m_cameraWorldPos", m_constants.m_cameraWorldPos, sizeof(m_constants.m_cameraWorldPos));
             setRaw("m_clipToWorld", m_constants.m_clipToWorld, sizeof(m_constants.m_clipToWorld));
             setRaw("m_giIntensity", &m_constants.m_giIntensity, sizeof(m_constants.m_giIntensity));
             setRaw("m_hysteresis", &m_constants.m_hysteresis, sizeof(m_constants.m_hysteresis));

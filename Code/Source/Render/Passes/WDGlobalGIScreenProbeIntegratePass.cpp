@@ -62,7 +62,6 @@ namespace AZ
             WDGlobalGIImportAttachment(frameGraph, fp->GetClipmap().GetScreenProbeDataCurrent(frameIndex), WDGlobalGIClipmap::GetScreenProbeDataViewDescriptor(), RHI::ScopeAttachmentAccess::Read, RHI::ScopeAttachmentStage::FragmentShader);
             WDGlobalGIImportAttachment(frameGraph, fp->GetClipmap().GetScreenProbeSHBlurred(), WDGlobalGIClipmap::GetScreenProbeShViewDescriptor(), RHI::ScopeAttachmentAccess::Read, RHI::ScopeAttachmentStage::FragmentShader);
             WDGlobalGIImportAttachment(frameGraph, fp->GetClipmap().GetScreenProbeAtlasCurrent(frameIndex), WDGlobalGIClipmap::GetScreenProbeAtlasViewDescriptor(), RHI::ScopeAttachmentAccess::Read, RHI::ScopeAttachmentStage::FragmentShader);
-            WDGlobalGIImportAttachment(frameGraph, fp->GetClipmap().GetScreenProbeDepthAtlas(), WDGlobalGIClipmap::GetScreenProbeAtlasViewDescriptor(), RHI::ScopeAttachmentAccess::Read, RHI::ScopeAttachmentStage::FragmentShader);
         }
 
         void WDGlobalGIScreenProbeIntegratePass::CompileResources(const RHI::FrameGraphCompileContext& context)
@@ -79,7 +78,6 @@ namespace AZ
                 WDGlobalGISetImage(srg.get(), "m_screenProbeData", fp->GetClipmap().GetScreenProbeDataCurrent(frameIndex));
                 WDGlobalGISetImage(srg.get(), "m_screenProbeSH", fp->GetClipmap().GetScreenProbeSHBlurred()); // denoised SH
                 WDGlobalGISetImage(srg.get(), "m_screenProbeAtlas", fp->GetClipmap().GetScreenProbeAtlasCurrent(frameIndex));
-                WDGlobalGISetImage(srg.get(), "m_screenProbeDepthAtlas", fp->GetClipmap().GetScreenProbeDepthAtlas());
 
                 const float specular = fp->GetScreenProbeSpecular();
                 WDGlobalGISetConstant(srg.get(), "m_screenProbeSpecular", &specular, sizeof(specular));

@@ -46,8 +46,7 @@ namespace AZ
             // Ping-pong: write the "current" atlas, read the "previous" one (reprojected) for history.
             WDGlobalGIImportAttachment(frameGraph, fp->GetClipmap().GetScreenProbeAtlasCurrent(frameIndex), WDGlobalGIClipmap::GetScreenProbeAtlasViewDescriptor(), RHI::ScopeAttachmentAccess::ReadWrite);
             WDGlobalGIImportAttachment(frameGraph, fp->GetClipmap().GetScreenProbeAtlasPrev(frameIndex), WDGlobalGIClipmap::GetScreenProbeAtlasViewDescriptor(), RHI::ScopeAttachmentAccess::Read);
-            // Depth/visibility moments atlas (Chebyshev), written fresh each frame.
-            WDGlobalGIImportAttachment(frameGraph, fp->GetClipmap().GetScreenProbeDepthAtlas(), WDGlobalGIClipmap::GetScreenProbeAtlasViewDescriptor(), RHI::ScopeAttachmentAccess::ReadWrite);
+            WDGlobalGIImportAttachment(frameGraph, fp->GetClipmap().GetScreenProbeDataPrev(frameIndex), WDGlobalGIClipmap::GetScreenProbeDataViewDescriptor(), RHI::ScopeAttachmentAccess::Read);
         }
 
         void WDGlobalGIScreenProbeTracePass::BindGIResources(const RHI::FrameGraphCompileContext& context, RPI::ShaderResourceGroup* srg)
@@ -75,8 +74,7 @@ namespace AZ
             WDGlobalGISetImage(srg, "m_irradianceClipmap", irradiance ? irradiance->GetImageView() : nullptr);
             WDGlobalGISetImage(srg, "m_screenProbeAtlas", atlasCurrent ? atlasCurrent->GetImageView() : nullptr);
             WDGlobalGISetImage(srg, "m_screenProbeHistory", atlasPrev ? atlasPrev->GetImageView() : nullptr);
-            const auto& depthAtlas = fp->GetClipmap().GetScreenProbeDepthAtlas();
-            WDGlobalGISetImage(srg, "m_screenProbeDepthAtlas", depthAtlas ? depthAtlas->GetImageView() : nullptr);
+            WDGlobalGISetImage(srg, "m_screenProbeDataHistory", fp->GetClipmap().GetScreenProbeDataPrev(frameIndex));
 
             // Screen resolution -> probe grid; the tile size grows if the frame needs more probes than fit.
             uint32_t screenW = 1, screenH = 1;

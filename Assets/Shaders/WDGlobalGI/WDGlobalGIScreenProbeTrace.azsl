@@ -23,9 +23,9 @@ ShaderResourceGroup PassSrg : SRG_PerPass
     Texture3D<float4>   m_voxelNormalClipmap; // surface normal for leak reduction
     Texture3D<float4>   m_anisoRadianceClipmap; // 6-direction radiance (#4)
     Texture3D<float4>   m_irradianceClipmap;    // world irradiance cache far-field (#8)
-    RWTexture2D<float4> m_screenProbeAtlas;  // octahedral radiance (rgb), a = valid; temporal/reproject
+    RWTexture2D<float4> m_screenProbeAtlas;  // octahedral radiance (rgb), a = normalised hit distance
     Texture2D<float4>   m_screenProbeHistory;   // previous-frame atlas for motion reprojection (#2)
-    RWTexture2D<float4> m_screenProbeDepthAtlas; // octahedral hit-distance moments (rg = mean, mean^2) for Chebyshev
+    Texture2D<uint2>    m_screenProbeDataHistory; // previous-frame probe placement, for history validity
 
     WDGLOBALGI_SHARED_CONSTANTS
 
@@ -62,6 +62,7 @@ void MainCS(uint3 dispatch_id : SV_DispatchThreadID)
 
     float3 radiance = float3(0.0f, 0.0f, 0.0f);
     float4 prev = float4(0.0f, 0.0f, 0.0f, 0.0f);
+    bool historyValid = false;
     // Distance from the probe to the first surface along this octa direction, normalised by
     // WDGI_SP_MAXDIST. Storing it in [0,1] keeps the second moment inside fp16's precise band, so
     // variance = |E[d^2] - E[d]^2| is not swamped by quantisation; 'far'/miss reads as 1 (visible).
@@ -97,17 +98,23 @@ void MainCS(uint3 dispatch_id : SV_DispatchThreadID)
             {
                 uint2 prevTile = (uint2)(prevUv * float2(screenRes) / float(tileSize));
                 prevTile = min(prevTile, uint2(tilesX - 1u, tilesY - 1u));
-                uint2 prevAtlasCoord = prevTile * uint(WDGI_SP_OCTA) + octa;
-                prev = PassSrg::m_screenProbeHistory.Load(int3(prevAtlasCoord, 0));
+                // A probe actually existed there last frame; the alpha channel now carries hit
+                // distance rather than a validity flag, so ask the placement data instead.
+                uint2 prevProbe = PassSrg::m_screenProbeDataHistory.Load(int3(int2(prevTile), 0)).xy;
+                if (WDGI_ProbeValid(prevProbe.x))
+                {
+                    uint2 prevAtlasCoord = prevTile * uint(WDGI_SP_OCTA) + octa;
+                    prev = PassSrg::m_screenProbeHistory.Load(int3(prevAtlasCoord, 0));
+                    historyValid = true;
+                }
             }
         }
     }
 
-    float hist = (prev.a > 0.0f) ? PassSrg::m_screenProbeTemporal : 0.0f;
+    float hist = historyValid ? PassSrg::m_screenProbeTemporal : 0.0f;
     float3 blended = lerp(radiance, prev.rgb, hist);
-    PassSrg::m_screenProbeAtlas[atlasCoord] = float4(blended, 1.0f);
 
-    // Depth moments (mean, mean^2) for DDGI-style Chebyshev visibility. The per-direction distance is
-    // deterministic per frame, so it's written fresh (no temporal / reprojection needed).
-    PassSrg::m_screenProbeDepthAtlas[atlasCoord] = float4(storedDist, storedDist * storedDist, 0.0f, 1.0f);
+    // Alpha carries this ray's normalised hit distance. It costs nothing here and is what the
+    // cross-probe spatial filter needs to tell a near-field occluder from a distant one.
+    PassSrg::m_screenProbeAtlas[atlasCoord] = float4(blended, storedDist);
 }

@@ -59,6 +59,7 @@ namespace AZ
                 float m_sunDirectionIntensity[4] = { 0.0f, -1.0f, 0.0f, 1.0f };
                 float m_sunColor[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
                 float m_skyColorIntensity[4] = { 0.3f, 0.44f, 0.62f, 1.0f };
+                float m_cameraWorldPos[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
                 // Clip->world matrix (row-major), for depth->world reconstruction. Identity by default.
                 float m_clipToWorld[16] = { 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f };
                 float m_giIntensity = 1.0f;
@@ -92,7 +93,7 @@ namespace AZ
             //! Release the clipmap textures.
             void Release();
 
-            bool IsInitialized() const { return m_radianceClipmap && m_irradianceClipmap && m_sdfClipmap && m_voxelNormalClipmap && m_albedoClipmap && m_screenProbeAtlas && m_screenProbeSH && m_anisoRadianceClipmap && m_screenProbeAtlasHistory && m_volumetricFroxel && m_screenProbeDepthAtlas && m_screenProbeSHBlurred && m_screenProbeData && m_screenProbeDataHistory; }
+            bool IsInitialized() const { return m_radianceClipmap && m_irradianceClipmap && m_sdfClipmap && m_voxelNormalClipmap && m_albedoClipmap && m_screenProbeAtlas && m_screenProbeSH && m_anisoRadianceClipmap && m_screenProbeAtlasHistory && m_volumetricFroxel && m_screenProbeSHBlurred && m_screenProbeData && m_screenProbeDataHistory; }
 
             //! Recompute the per-cascade centres from the current camera position and refresh the
             //! shader constants from the configuration.
@@ -129,11 +130,6 @@ namespace AZ
 
             //! Per-probe order-2 irradiance SH atlas (2D, RGBA16F): 9 coeff texels per probe in a row.
             const Data::Instance<RPI::AttachmentImage>& GetScreenProbeSH() const { return m_screenProbeSH; }
-
-            //! Per-probe octahedral depth/visibility atlas (same layout as the radiance atlas): rg = mean
-            //! hit distance + mean-squared (variance), for DDGI-style Chebyshev visibility weighting. This
-            //! is what makes the interpolation leak-free and sharp at contacts.
-            const Data::Instance<RPI::AttachmentImage>& GetScreenProbeDepthAtlas() const { return m_screenProbeDepthAtlas; }
 
             //! Spatially-blurred copy of the irradiance-SH atlas (depth-aware denoise across probes). The
             //! integrate reads this instead of the raw SH so per-probe noise is smoothed out.
@@ -232,7 +228,6 @@ namespace AZ
             Data::Instance<RPI::AttachmentImage> m_anisoRadianceClipmap;     // 6-direction radiance (#4)
             Data::Instance<RPI::AttachmentImage> m_screenProbeAtlasHistory;  // reprojection ping-pong (#2)
             Data::Instance<RPI::AttachmentImage> m_volumetricFroxel;         // view-aligned froxel GI (#7)
-            Data::Instance<RPI::AttachmentImage> m_screenProbeDepthAtlas;    // octahedral depth moments (Chebyshev)
             Data::Instance<RPI::AttachmentImage> m_screenProbeSHBlurred;     // depth-aware spatial denoise of the SH
             Data::Instance<RPI::AttachmentImage> m_screenProbeData;          // per-probe placement (ping-pong)
             Data::Instance<RPI::AttachmentImage> m_screenProbeDataHistory;

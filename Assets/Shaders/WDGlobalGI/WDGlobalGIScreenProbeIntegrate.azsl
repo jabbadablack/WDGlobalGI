@@ -5,8 +5,8 @@
  * SPDX-License-Identifier: Apache-2.0 OR MIT
  *
  * WDGlobalGI screen-probe integrate (audit #2 + #7 specular). Per lit pixel:
- *  - Diffuse: bilinearly interpolate the 4 surrounding probes' irradiance SH (depth-bilateral weighted
- *    to avoid leaking across discontinuities), evaluate for the pixel normal -> indirect diffuse.
+ *  - Diffuse: bilinearly interpolate the 4 surrounding probes' irradiance SH, each weighted by how
+ *    close that probe sits to the shading point's tangent plane, evaluate for the pixel normal.
  *  - Specular: sample the nearest probe's octahedral radiance in the reflection direction -> glossy GI.
  * Add-blended into the lighting target. Brightness matches the clipmap composite (no extra /PI - the
  * BRDF /PI cancels the cosine-integral PI).
@@ -26,8 +26,7 @@ ShaderResourceGroup PassSrg : SRG_PerPass
     Texture2DMS<float>  m_depth;
     Texture2D<uint2>    m_screenProbeData;   // per-probe anchor + normal from the placement pass
     Texture2D<float4>   m_screenProbeSH;     // 9 irradiance-SH coeffs per probe (diffuse)
-    Texture2D<float4>   m_screenProbeAtlas;  // octahedral radiance (specular)
-    Texture2D<float4>   m_screenProbeDepthAtlas; // octahedral depth moments for Chebyshev visibility
+    Texture2D<float4>   m_screenProbeAtlas;  // octahedral radiance (rgb), a = normalised hit distance
 
     WDGLOBALGI_SHARED_CONSTANTS
 
@@ -40,10 +39,9 @@ ShaderResourceGroup PassSrg : SRG_PerPass
 #include <WDGlobalGICommon.azsli>
 
 // Reconstruct the world position of a probe (tile centre) from the G-buffer depth.
-bool ProbeWorldPos(int2 tile, uint2 screenRes, out float3 worldPos, out float3 probeNormal)
+bool ProbeWorldPos(int2 tile, uint2 screenRes, out float3 worldPos)
 {
     uint2 probeData = PassSrg::m_screenProbeData.Load(int3(tile, 0)).xy;
-    probeNormal = WDGI_UnpackProbeNormal(probeData.y);
     if (!WDGI_ProbeValid(probeData.x))
     {
         worldPos = float3(0, 0, 0);
@@ -61,33 +59,28 @@ bool ProbeWorldPos(int2 tile, uint2 screenRes, out float3 worldPos, out float3 p
     return true;
 }
 
-// DDGI-style Chebyshev visibility: how visible the shading point is from a probe, using the probe's
-// octahedral depth moments (mean + mean^2 hit distance). This is what makes the interpolation leak-free
-// and sharp at contacts - a probe occluded from the pixel (e.g. behind a wall) gets ~zero weight.
-float ChebyshevVisibility(int2 tile, float3 probeWorld, float3 probeNormal, float3 worldPos)
+// How much a probe should contribute to this pixel, following daGI2's sp_upsample_weights.hlsl.
+// The dominant term is the probe's distance from the shading point's tangent plane, divided by the
+// shading point's depth so the tolerance scales with distance; the weight falls below 0.01 once the
+// probe is about 2.6% of the depth off the plane. The secondary, much gentler relative-depth term is
+// what separates two probes sitting on *different* surfaces that happen to share a plane - a wall
+// corner seen at a glancing angle. Plane distance alone blends across that corner; depth alone kills
+// the bilinear on a single flat wall and brings the probe lattice back, so both are needed.
+// There is deliberately no separate normal test: the normal already defines the plane, and a probe on
+// a differently-oriented surface is rejected by the plane distance.
+float ProbeWeight(float3 probeWorld, float3 worldPos, float3 worldNormal, float sceneDepth)
 {
-    float3 toPixel = worldPos - probeWorld;
-    float dist = length(toPixel);
-    if (dist < 1e-3f)
-    {
-        return 1.0f;
-    }
-    float3 dir = toPixel / dist;
-    int2 texel = tile * int(WDGI_SP_OCTA) + WDGI_HemisphereNearestTexel(dir, probeNormal);
-    float2 moments = PassSrg::m_screenProbeDepthAtlas.Load(int3(texel, 0)).rg;
+    const float depthExp = -10000.0f;
+    const float depthTermExp = -3.0f;
 
-    float mean = moments.x;
-    float distNorm = dist / WDGI_SP_MAXDIST;
-    if (distNorm <= mean)
-    {
-        return 1.0f; // the probe sees the point along this direction -> fully visible
-    }
-    float variance = abs(moments.y - mean * mean);
-    float softFloor = mean * 0.08f;             // relative floor -> a soft transition, not a hard cutoff
-    variance = max(variance, softFloor * softFloor);
-    float d = distNorm - mean;
-    float cheb = variance / (variance + d * d);
-    return max(cheb * cheb, 0.04f);             // sharpen, with a small floor so nothing goes fully black
+    float invDepth = 1.0f / max(sceneDepth, 1e-4f);
+    float planeDist = dot(probeWorld - worldPos, worldNormal) * invDepth;
+    float relDepth = planeDist * planeDist;
+
+    float probeDepth = distance(probeWorld, PassSrg::m_cameraWorldPos.xyz);
+    relDepth += (depthTermExp / depthExp) * abs(probeDepth - sceneDepth) * invDepth;
+
+    return exp2(depthExp * relDepth);
 }
 
 VSOutput MainVS(VSInput input)
@@ -118,14 +111,20 @@ PSOutput MainPS(VSOutput IN)
     uint2 screenRes = PassSrg::m_screenProbeInfo.xy;
     int2 maxTile = int2(PassSrg::m_screenProbeInfo.zw) - 1;
 
-    // Probe-grid coordinate (probe centres sit at integer indices).
-    float2 probeCoord = float2(coords) / float(PassSrg::m_screenProbeTileSize) - 0.5f;
+    // Probe-grid coordinate (probe centres sit at integer indices). The bilinear ramp is widened by
+    // half a pixel on each side so it never reaches exactly 0 or 1: every pixel is then driven by all
+    // four surrounding probes rather than collapsing onto one at the tile boundaries, which is what
+    // otherwise prints the probe lattice onto flat surfaces.
+    float tileSizeF = float(PassSrg::m_screenProbeTileSize);
+    float2 probeCoord = float2(coords) / tileSizeF - 0.5f;
     int2 baseTile = int2(floor(probeCoord));
-    float2 frac = probeCoord - float2(baseTile);
 
-    // Bilinear + Chebyshev-visibility accumulation of the 9 irradiance-SH coefficients (DDGI-style):
-    // each of the 4 surrounding probes is weighted by how visible this pixel is from it, which kills
-    // light leaking across walls and sharpens contact - the main thing separating us from DDGI before.
+    const float bilinearExpand = 0.5f;
+    float2 baseProbePixel = (float2(baseTile) + 0.5f) * tileSizeF;
+    float2 frac = saturate((float2(coords) - baseProbePixel + bilinearExpand) / (tileSizeF + 2.0f * bilinearExpand));
+
+    float sceneDepth = distance(worldPos, PassSrg::m_cameraWorldPos.xyz);
+
     float3 shAccum[9];
     [unroll] for (int k = 0; k < 9; ++k)
     {
@@ -138,17 +137,20 @@ PSOutput MainPS(VSOutput IN)
         [unroll] for (int i = 0; i < 2; ++i)
         {
             int2 tile = clamp(baseTile + int2(i, j), int2(0, 0), maxTile);
-            float bilinear = (i == 0 ? (1.0f - frac.x) : frac.x) * (j == 0 ? (1.0f - frac.y) : frac.y);
+            // Never exactly zero, so the interpolant stays continuous across a tile boundary even
+            // where one probe dominates.
+            float bilinear = max(1e-3f, (i == 0 ? (1.0f - frac.x) : frac.x) * (j == 0 ? (1.0f - frac.y) : frac.y));
 
             float3 probeWorld;
-            float3 probeNormal;
-            float visibility = 0.0f;
-            if (ProbeWorldPos(tile, screenRes, probeWorld, probeNormal))
+            float geometric = 0.0f;
+            if (ProbeWorldPos(tile, screenRes, probeWorld))
             {
-                visibility = ChebyshevVisibility(tile, probeWorld, probeNormal, worldPos);
+                // Floored, so a pixel whose four probes all sit off its plane - a thin feature the
+                // probe grid straddles - degrades to plain bilinear rather than losing its GI.
+                geometric = max(1e-5f, ProbeWeight(probeWorld, worldPos, normal, sceneDepth));
             }
 
-            float w = bilinear * visibility;
+            float w = bilinear * geometric;
             if (w > 0.0f)
             {
                 uint2 shBase = uint2(uint(tile.x) * uint(WDGI_SP_COEFFS), uint(tile.y));
