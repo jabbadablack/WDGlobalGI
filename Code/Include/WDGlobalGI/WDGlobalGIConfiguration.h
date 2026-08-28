@@ -105,14 +105,17 @@ namespace AZ
             //! Temporal moving-average factor used when accumulating irradiance (0 = no history, 1 = frozen).
             float m_hysteresis = 0.9f;
 
-            //! Number of rays cast per probe each update (scaled by quality).
-            uint32_t m_raysPerProbe = 256;
+            //! Rays cast per world-clipmap probe each update. Seeded by the quality preset whenever it
+            //! changes, and honoured as-is otherwise. Screen probes are not affected: their ray count is
+            //! the octahedral resolution, which is fixed at compile time.
+            uint32_t m_raysPerProbe = 48;
 
-            //! Maximum number of voxel ray-march steps before falling back to sky.
-            uint32_t m_maxRaySteps = 64;
+            //! Maximum number of voxel ray-march steps before falling back to sky. Seeded by quality.
+            uint32_t m_maxRaySteps = 24;
 
-            //! Fraction of probes refreshed each frame (stochastic update budget, 0..1).
-            float m_probeUpdateFraction = 0.25f;
+            //! Fraction of world-clipmap probes refreshed each frame, on top of the quality preset's
+            //! round-robin. 1 = every probe in this frame's slab, lower = a stochastic subset.
+            float m_probeUpdateFraction = 1.0f;
 
             //! Use the screen-space probe detail layer (octahedral, per-pixel) instead of compositing
             //! the coarse world irradiance clipmap. The clipmap still runs (multi-bounce feedback +

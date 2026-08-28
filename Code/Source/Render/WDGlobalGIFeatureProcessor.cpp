@@ -84,9 +84,9 @@ namespace AZ
                         ->DataElement(AZ::Edit::UIHandlers::Slider, &WDGlobalGIConfiguration::m_hysteresis, "Hysteresis", "Temporal moving-average factor")
                             ->Attribute(AZ::Edit::Attributes::Min, 0.0f)
                             ->Attribute(AZ::Edit::Attributes::Max, 0.999f)
-                        ->DataElement(AZ::Edit::UIHandlers::Default, &WDGlobalGIConfiguration::m_raysPerProbe, "Rays Per Probe", "Base ray budget per probe update")
-                        ->DataElement(AZ::Edit::UIHandlers::Default, &WDGlobalGIConfiguration::m_maxRaySteps, "Max Ray Steps", "Voxel ray-march step budget")
-                        ->DataElement(AZ::Edit::UIHandlers::Slider, &WDGlobalGIConfiguration::m_probeUpdateFraction, "Probe Update Fraction", "Fraction of probes refreshed per frame")
+                        ->DataElement(AZ::Edit::UIHandlers::Default, &WDGlobalGIConfiguration::m_raysPerProbe, "Rays Per Probe", "Rays per world-clipmap probe update. Seeded by Quality when you change it. Screen probes are unaffected - their ray count is the fixed octahedral resolution.")
+                        ->DataElement(AZ::Edit::UIHandlers::Default, &WDGlobalGIConfiguration::m_maxRaySteps, "Max Ray Steps", "Voxel ray-march step budget. Seeded by Quality when you change it.")
+                        ->DataElement(AZ::Edit::UIHandlers::Slider, &WDGlobalGIConfiguration::m_probeUpdateFraction, "Probe Update Fraction", "Share of each frame's world-clipmap probe slab that is actually refreshed (1 = all of it). Lower trades convergence speed for cost.")
                             ->Attribute(AZ::Edit::Attributes::Min, 0.0f)
                             ->Attribute(AZ::Edit::Attributes::Max, 1.0f)
                         ->DataElement(AZ::Edit::UIHandlers::CheckBox, &WDGlobalGIConfiguration::m_useScreenProbes, "Use Screen Probes", "Per-pixel octahedral screen-space probes (sharper, Lumen/daGI2-style) instead of the coarse 6-value ambient-cube clipmap composite. The single biggest quality jump - recommended.")
@@ -254,6 +254,30 @@ namespace AZ
                 /*beforeReferencePass=*/false);
         }
 
+        void WDGlobalGIQualityPreset(WDGlobalGIQualityLevel level, uint32_t& raysPerProbe, uint32_t& maxRaySteps)
+        {
+            switch (level)
+            {
+            case WDGlobalGIQualityLevel::Low:
+                raysPerProbe = 32;
+                maxRaySteps = 16;
+                break;
+            case WDGlobalGIQualityLevel::High:
+                raysPerProbe = 64;
+                maxRaySteps = 32;
+                break;
+            default:
+                raysPerProbe = 48;
+                maxRaySteps = 24;
+                break;
+            }
+        }
+
+        void WDGlobalGIFeatureProcessor::ApplyQualityPreset()
+        {
+            WDGlobalGIQualityPreset(m_configuration.m_qualityLevel, m_configuration.m_raysPerProbe, m_configuration.m_maxRaySteps);
+        }
+
         void WDGlobalGIFeatureProcessor::SetConfiguration(const WDGlobalGIConfiguration& config)
         {
             // A change to the clipmap geometry (cell size / cascade count) invalidates every voxel's
@@ -262,9 +286,25 @@ namespace AZ
                 config.m_baseCellSize != m_configuration.m_baseCellSize ||
                 config.m_cascadeCount != m_configuration.m_cascadeCount;
 
+            // Seed the ray budget from the preset only when the preset itself moves, and only if the
+            // incoming budget is still whatever the outgoing preset put there. Reseeding every frame is
+            // what previously made Rays Per Probe and Max Ray Steps impossible to set; reseeding
+            // unconditionally on a quality change would instead discard a hand-set budget the moment a
+            // level loads with a non-default quality.
+            uint32_t presetRays = 0;
+            uint32_t presetSteps = 0;
+            WDGlobalGIQualityPreset(m_configuration.m_qualityLevel, presetRays, presetSteps);
+            const bool budgetIsPreset = config.m_raysPerProbe == presetRays && config.m_maxRaySteps == presetSteps;
+            const bool qualityChanged = config.m_qualityLevel != m_configuration.m_qualityLevel;
+
             m_configuration = config;
             m_configuration.m_cascadeCount =
                 AZ::GetClamp<uint32_t>(m_configuration.m_cascadeCount, 1u, WDGlobalGILimits::MaxCascades);
+
+            if (qualityChanged && budgetIsPreset)
+            {
+                ApplyQualityPreset();
+            }
 
             if (geometryChanged)
             {
@@ -279,9 +319,10 @@ namespace AZ
 
         void WDGlobalGIFeatureProcessor::SetQualityLevel(WDGlobalGIQualityLevel qualityLevel)
         {
-            if (qualityLevel < WDGlobalGIQualityLevel::Count)
+            if (qualityLevel < WDGlobalGIQualityLevel::Count && qualityLevel != m_configuration.m_qualityLevel)
             {
                 m_configuration.m_qualityLevel = qualityLevel;
+                ApplyQualityPreset();
             }
         }
 

@@ -46,6 +46,9 @@ namespace AZ
             void SetEnabled(bool enabled) override;
             bool GetEnabled() const override { return m_configuration.m_enabled; }
             void SetQualityLevel(WDGlobalGIQualityLevel qualityLevel) override;
+
+            //! Seed the ray budget from the current quality preset.
+            void ApplyQualityPreset();
             void InvalidateClipmaps() override;
             void SetDebugViewMode(WDGlobalGIDebugView mode) override { m_debugViewMode = mode; }
             WDGlobalGIDebugView GetDebugViewMode() const override { return m_debugViewMode; }

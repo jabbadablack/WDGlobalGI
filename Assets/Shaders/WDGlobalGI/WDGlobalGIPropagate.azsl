@@ -60,6 +60,15 @@ void MainCS(uint3 dispatch_id : SV_DispatchThreadID)
                       actualZ * (uint)(res.x * res.y);
     uint rng = WDGI_Hash(probeIndex + PassSrg::m_frameIndex * 2654435761u);
 
+    // Thin this frame's slab further: the round-robin above already spreads the grid over several
+    // frames, and this drops a random share of what remains. Probes that are skipped simply keep the
+    // irradiance they already hold, so the field stays valid and only converges more slowly.
+    if (PassSrg::m_probeUpdateFraction < 1.0f &&
+        WDGI_RandFromUint(rng) >= max(PassSrg::m_probeUpdateFraction, 0.0f))
+    {
+        return;
+    }
+
     // Cast a budget of rays and accumulate into a 6-face ambient cube.
     float3 accum[WDGLOBALGI_FACE_COUNT];
     float  weights[WDGLOBALGI_FACE_COUNT];

@@ -275,27 +275,21 @@ namespace AZ
             m_constants.m_skyColorIntensity[2] = config.m_skyColor.GetB();
             m_constants.m_skyColorIntensity[3] = config.m_skyIntensity;
 
-            // Tuning, scaled by quality level. The dominant cost is the Propagate pass, which casts
-            // m_raysPerProbe rays of up to m_maxRaySteps each, for 1/m_updateDivisor of the probes per
-            // frame (round-robin over Z slabs). Keep these modest - irradiance accumulates temporally.
-            uint32_t raysPerProbe = config.m_raysPerProbe;
-            uint32_t maxRaySteps = config.m_maxRaySteps;
+            // The dominant cost is the Propagate pass, which casts m_raysPerProbe rays of up to
+            // m_maxRaySteps each, for 1/m_updateDivisor of the probes per frame (round-robin over Z
+            // slabs). The ray budget comes from the configuration, which the quality preset seeds when
+            // it changes - overwriting it here every frame would make those fields impossible to set.
+            // Only the round-robin divisor is derived, because it is not a configuration field.
             uint32_t updateDivisor = 8;
             switch (config.m_qualityLevel)
             {
             case WDGlobalGIQualityLevel::Low:
-                raysPerProbe = 32;
-                maxRaySteps = 16;
                 updateDivisor = 16; // full refresh every 16 frames
                 break;
             case WDGlobalGIQualityLevel::Medium:
-                raysPerProbe = 48;
-                maxRaySteps = 24;
                 updateDivisor = 8;
                 break;
             case WDGlobalGIQualityLevel::High:
-                raysPerProbe = 64;
-                maxRaySteps = 32;
                 updateDivisor = 4;
                 break;
             default:
@@ -304,8 +298,8 @@ namespace AZ
 
             m_constants.m_giIntensity = config.m_giIntensity;
             m_constants.m_hysteresis = AZ::GetClamp(config.m_hysteresis, 0.0f, 0.999f);
-            m_constants.m_raysPerProbe = raysPerProbe;
-            m_constants.m_maxRaySteps = maxRaySteps;
+            m_constants.m_raysPerProbe = AZ::GetMax(config.m_raysPerProbe, 1u);
+            m_constants.m_maxRaySteps = AZ::GetMax(config.m_maxRaySteps, 1u);
             m_constants.m_frameIndex = frameIndex;
             m_constants.m_probeUpdateFraction = AZ::GetClamp(config.m_probeUpdateFraction, 0.0f, 1.0f);
             m_constants.m_updateDivisor = AZ::GetMax(updateDivisor, 1u);

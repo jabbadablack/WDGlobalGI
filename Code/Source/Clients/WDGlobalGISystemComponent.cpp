@@ -250,6 +250,7 @@ namespace AZ
                 cfgChanged |= ImGui::SliderFloat("Hysteresis", &config.m_hysteresis, 0.0f, 0.99f);
                 cfgChanged |= ImGui::SliderFloat("Leak Reduction", &config.m_leakReduction, 0.0f, 1.0f);
                 cfgChanged |= ImGui::SliderFloat("Base Cell Size (m)", &config.m_baseCellSize, 0.1f, 2.0f);
+                cfgChanged |= ImGui::SliderFloat("Probe Update Fraction", &config.m_probeUpdateFraction, 0.05f, 1.0f);
 
                 int cascadeCount = static_cast<int>(config.m_cascadeCount);
                 if (ImGui::SliderInt("Cascades", &cascadeCount, 1, 4))
