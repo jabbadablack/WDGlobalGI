@@ -93,7 +93,7 @@ namespace AZ
             //! Release the clipmap textures.
             void Release();
 
-            bool IsInitialized() const { return m_radianceClipmap && m_irradianceClipmap && m_sdfClipmap && m_voxelNormalClipmap && m_albedoClipmap && m_screenProbeAtlas && m_screenProbeSH && m_anisoRadianceClipmap && m_screenProbeAtlasHistory && m_volumetricFroxel && m_screenProbeSHBlurred && m_screenProbeData && m_screenProbeDataHistory; }
+            bool IsInitialized() const { return m_radianceClipmap && m_irradianceClipmap && m_sdfClipmap && m_voxelNormalClipmap && m_albedoClipmap && m_screenProbeAtlas && m_screenProbeSH && m_anisoRadianceClipmap && m_screenProbeAtlasHistory && m_volumetricFroxel && m_screenProbeRadianceFiltered && m_screenProbeData && m_screenProbeDataHistory; }
 
             //! Recompute the per-cascade centres from the current camera position and refresh the
             //! shader constants from the configuration.
@@ -131,9 +131,9 @@ namespace AZ
             //! Per-probe order-2 irradiance SH atlas (2D, RGBA16F): 9 coeff texels per probe in a row.
             const Data::Instance<RPI::AttachmentImage>& GetScreenProbeSH() const { return m_screenProbeSH; }
 
-            //! Spatially-blurred copy of the irradiance-SH atlas (depth-aware denoise across probes). The
-            //! integrate reads this instead of the raw SH so per-probe noise is smoothed out.
-            const Data::Instance<RPI::AttachmentImage>& GetScreenProbeSHBlurred() const { return m_screenProbeSHBlurred; }
+            //! Cross-probe filtered copy of the radiance atlas. The SH convolution reads this rather
+            //! than the raw trace output, so it convolves shared samples instead of 64 noisy ones.
+            const Data::Instance<RPI::AttachmentImage>& GetScreenProbeRadianceFiltered() const { return m_screenProbeRadianceFiltered; }
 
             //! 6-direction anisotropic voxel radiance (audit #4). Same X/Y as the radiance clipmap, Z
             //! stacked cascade*face like the irradiance clipmap. Inject writes cosine-weighted buckets;
@@ -228,7 +228,7 @@ namespace AZ
             Data::Instance<RPI::AttachmentImage> m_anisoRadianceClipmap;     // 6-direction radiance (#4)
             Data::Instance<RPI::AttachmentImage> m_screenProbeAtlasHistory;  // reprojection ping-pong (#2)
             Data::Instance<RPI::AttachmentImage> m_volumetricFroxel;         // view-aligned froxel GI (#7)
-            Data::Instance<RPI::AttachmentImage> m_screenProbeSHBlurred;     // depth-aware spatial denoise of the SH
+            Data::Instance<RPI::AttachmentImage> m_screenProbeRadianceFiltered; // cross-probe radiance filter
             Data::Instance<RPI::AttachmentImage> m_screenProbeData;          // per-probe placement (ping-pong)
             Data::Instance<RPI::AttachmentImage> m_screenProbeDataHistory;
 

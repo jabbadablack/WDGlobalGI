@@ -155,9 +155,9 @@ namespace AZ
             m_screenProbeDataHistory = CreateAtlasImage(
                 WDGlobalGILimits::ScreenProbeDataMaxWidth, WDGlobalGILimits::ScreenProbeDataMaxHeight,
                 ScreenProbeDataFormat, "WDGlobalGI_ScreenProbeDataHistory");
-            m_screenProbeSHBlurred = CreateAtlasImage(
-                WDGlobalGILimits::ScreenProbeShAtlasMaxWidth, WDGlobalGILimits::ScreenProbeShAtlasMaxHeight,
-                ClipmapFormat, "WDGlobalGI_ScreenProbeSHBlurred");
+            m_screenProbeRadianceFiltered = CreateAtlasImage(
+                WDGlobalGILimits::ScreenProbeAtlasMaxWidth, WDGlobalGILimits::ScreenProbeAtlasMaxHeight,
+                ClipmapFormat, "WDGlobalGI_ScreenProbeRadianceFiltered");
             m_volumetricFroxel = CreateVolumeImage(
                 WDGlobalGILimits::VolumetricFroxelX, WDGlobalGILimits::VolumetricFroxelY, WDGlobalGILimits::VolumetricFroxelZ,
                 ClipmapFormat, "WDGlobalGI_VolumetricFroxel");
@@ -177,7 +177,7 @@ namespace AZ
             m_anisoRadianceClipmap = nullptr;
             m_screenProbeAtlasHistory = nullptr;
             m_volumetricFroxel = nullptr;
-            m_screenProbeSHBlurred = nullptr;
+            m_screenProbeRadianceFiltered = nullptr;
             m_screenProbeData = nullptr;
             m_screenProbeDataHistory = nullptr;
         }

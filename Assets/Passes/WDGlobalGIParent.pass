@@ -71,15 +71,15 @@
                     ]
                 },
                 {
-                    "Name": "WDGlobalGIScreenProbeConvertPass",
-                    "TemplateName": "WDGlobalGIScreenProbeConvertPassTemplate",
+                    "Name": "WDGlobalGIScreenProbeBlurPass",
+                    "TemplateName": "WDGlobalGIScreenProbeBlurPassTemplate",
                     "Connections": [
                         { "LocalSlot": "Depth", "AttachmentRef": { "Pass": "Parent", "Attachment": "DepthStencilInputOutput" } }
                     ]
                 },
                 {
-                    "Name": "WDGlobalGIScreenProbeBlurPass",
-                    "TemplateName": "WDGlobalGIScreenProbeBlurPassTemplate",
+                    "Name": "WDGlobalGIScreenProbeConvertPass",
+                    "TemplateName": "WDGlobalGIScreenProbeConvertPassTemplate",
                     "Connections": [
                         { "LocalSlot": "Depth", "AttachmentRef": { "Pass": "Parent", "Attachment": "DepthStencilInputOutput" } }
                     ]

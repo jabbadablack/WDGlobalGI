@@ -38,8 +38,8 @@ namespace AZ
 
             const uint32_t frameIndex = fp->GetClipmap().GetShaderConstants().m_frameIndex;
             WDGlobalGIImportAttachment(frameGraph, fp->GetClipmap().GetScreenProbeDataCurrent(frameIndex), WDGlobalGIClipmap::GetScreenProbeDataViewDescriptor(), RHI::ScopeAttachmentAccess::Read);
-            WDGlobalGIImportAttachment(frameGraph, fp->GetClipmap().GetScreenProbeSH(), WDGlobalGIClipmap::GetScreenProbeShViewDescriptor(), RHI::ScopeAttachmentAccess::Read);
-            WDGlobalGIImportAttachment(frameGraph, fp->GetClipmap().GetScreenProbeSHBlurred(), WDGlobalGIClipmap::GetScreenProbeShViewDescriptor(), RHI::ScopeAttachmentAccess::ReadWrite);
+            WDGlobalGIImportAttachment(frameGraph, fp->GetClipmap().GetScreenProbeAtlasCurrent(frameIndex), WDGlobalGIClipmap::GetScreenProbeAtlasViewDescriptor(), RHI::ScopeAttachmentAccess::Read);
+            WDGlobalGIImportAttachment(frameGraph, fp->GetClipmap().GetScreenProbeRadianceFiltered(), WDGlobalGIClipmap::GetScreenProbeAtlasViewDescriptor(), RHI::ScopeAttachmentAccess::ReadWrite);
         }
 
         void WDGlobalGIScreenProbeBlurPass::BindGIResources(const RHI::FrameGraphCompileContext& context, RPI::ShaderResourceGroup* srg)
@@ -51,12 +51,9 @@ namespace AZ
             }
 
             const uint32_t frameIndex = fp->GetClipmap().GetShaderConstants().m_frameIndex;
-            WDGlobalGISetImage(srg, "m_depth", GetInputImageView(context, AZ::Name("Depth")));
             WDGlobalGISetImage(srg, "m_screenProbeData", fp->GetClipmap().GetScreenProbeDataCurrent(frameIndex));
-            const auto& sh = fp->GetClipmap().GetScreenProbeSH();
-            const auto& shBlurred = fp->GetClipmap().GetScreenProbeSHBlurred();
-            WDGlobalGISetImage(srg, "m_screenProbeSH", sh ? sh->GetImageView() : nullptr);
-            WDGlobalGISetImage(srg, "m_screenProbeSHBlurred", shBlurred ? shBlurred->GetImageView() : nullptr);
+            WDGlobalGISetImage(srg, "m_screenProbeAtlas", fp->GetClipmap().GetScreenProbeAtlasCurrent(frameIndex));
+            WDGlobalGISetImage(srg, "m_screenProbeRadianceFiltered", fp->GetClipmap().GetScreenProbeRadianceFiltered());
 
             // Screen resolution -> probe grid; ComputeScreenProbeGrid keeps every pass in agreement.
             uint32_t screenW = 1, screenH = 1;
@@ -76,8 +73,8 @@ namespace AZ
 
         void WDGlobalGIScreenProbeBlurPass::GetDispatchThreadCount(uint32_t& x, uint32_t& y, uint32_t& z) const
         {
-            x = AZ::GetMax(m_tilesX, 1u);
-            y = AZ::GetMax(m_tilesY, 1u);
+            x = AZ::GetMax(m_tilesX * WDGlobalGILimits::ScreenProbeOctaRes, 1u);
+            y = AZ::GetMax(m_tilesY * WDGlobalGILimits::ScreenProbeOctaRes, 1u);
             z = 1;
         }
     } // namespace Render

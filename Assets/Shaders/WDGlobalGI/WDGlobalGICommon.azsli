@@ -228,7 +228,7 @@ float3 WDGI_SHEvalIrradiance(float3 coeffs[9], float3 n)
 // the bilinear on a single flat wall and brings the probe lattice back, so both are needed.
 // There is deliberately no separate normal test: the normal already defines the plane, and a probe on
 // a differently-oriented surface is rejected by the plane distance.
-float WDGI_ProbeWeight(float3 probeWorld, float3 worldPos, float3 worldNormal, float sceneDepth)
+float WDGI_ProbeWeightScaled(float3 probeWorld, float3 worldPos, float3 worldNormal, float sceneDepth, float expScale)
 {
     const float depthExp = -10000.0f;
     const float depthTermExp = -3.0f;
@@ -240,7 +240,12 @@ float WDGI_ProbeWeight(float3 probeWorld, float3 worldPos, float3 worldNormal, f
     float probeDepth = distance(probeWorld, PassSrg::m_cameraWorldPos.xyz);
     relDepth += (depthTermExp / depthExp) * abs(probeDepth - sceneDepth) * invDepth;
 
-    return exp2(depthExp * relDepth);
+    return exp2(depthExp * expScale * relDepth);
+}
+
+float WDGI_ProbeWeight(float3 probeWorld, float3 worldPos, float3 worldNormal, float sceneDepth)
+{
+    return WDGI_ProbeWeightScaled(probeWorld, worldPos, worldNormal, sceneDepth, 1.0f);
 }
 
 // ---------------------------------------------------------------------------------------------
