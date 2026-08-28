@@ -10,16 +10,19 @@
                 {
                     "Name": "AlbedoInput",
                     "SlotType": "Input",
+                    "ShaderInputName": "m_albedo",
                     "ScopeAttachmentUsage": "Shader"
                 },
                 {
                     "Name": "NormalInput",
                     "SlotType": "Input",
+                    "ShaderInputName": "m_normal",
                     "ScopeAttachmentUsage": "Shader"
                 },
                 {
-                    "Name": "DepthInput",
+                    "Name": "Depth",
                     "SlotType": "Input",
+                    "ShaderInputName": "m_depth",
                     "ScopeAttachmentUsage": "Shader",
                     "ImageViewDesc": {
                         "AspectFlags": [ "Depth" ]

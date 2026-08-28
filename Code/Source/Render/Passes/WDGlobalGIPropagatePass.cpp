@@ -104,30 +104,16 @@ namespace AZ
                 return;
             }
 
-            const RHI::ShaderResourceGroupLayout* layout = srg->GetLayout();
-            auto setImage = [&](const char* name, const RHI::ImageView* view)
-            {
-                if (!view)
-                {
-                    return;
-                }
-                RHI::ShaderInputImageIndex index = layout->FindShaderInputImageIndex(AZ::Name(name));
-                if (index.IsValid())
-                {
-                    srg->SetImageView(index, view);
-                }
-            };
-
             const auto& radiance = fp->GetClipmap().GetRadianceClipmap();
             const auto& irradiance = fp->GetClipmap().GetIrradianceClipmap();
             const auto& sdf = fp->GetClipmap().GetSdfClipmap();
             const auto& voxelNormal = fp->GetClipmap().GetVoxelNormalClipmap();
             const auto& anisoRadiance = fp->GetClipmap().GetAnisoRadianceClipmap();
-            setImage("m_radianceClipmap", radiance ? radiance->GetImageView() : nullptr);
-            setImage("m_sdfClipmap", sdf ? sdf->GetImageView() : nullptr);
-            setImage("m_voxelNormalClipmap", voxelNormal ? voxelNormal->GetImageView() : nullptr);
-            setImage("m_anisoRadianceClipmap", anisoRadiance ? anisoRadiance->GetImageView() : nullptr);
-            setImage("m_irradianceClipmap", irradiance ? irradiance->GetImageView() : nullptr);
+            WDGlobalGISetImage(srg, "m_radianceClipmap", radiance ? radiance->GetImageView() : nullptr);
+            WDGlobalGISetImage(srg, "m_sdfClipmap", sdf ? sdf->GetImageView() : nullptr);
+            WDGlobalGISetImage(srg, "m_voxelNormalClipmap", voxelNormal ? voxelNormal->GetImageView() : nullptr);
+            WDGlobalGISetImage(srg, "m_anisoRadianceClipmap", anisoRadiance ? anisoRadiance->GetImageView() : nullptr);
+            WDGlobalGISetImage(srg, "m_irradianceClipmap", irradiance ? irradiance->GetImageView() : nullptr);
         }
 
         void WDGlobalGIPropagatePass::GetDispatchThreadCount(uint32_t& x, uint32_t& y, uint32_t& z) const

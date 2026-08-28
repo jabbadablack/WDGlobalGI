@@ -16,8 +16,8 @@
 static const float WDGI_PI = 3.14159265359f;
 static const float WDGI_TWO_PI = 6.28318530718f;
 
-// Screen-space probe layout (must match WDGlobalGILimits in WDGlobalGIConfiguration.h).
-#define WDGI_SP_TILE 16    // screen pixels per probe tile
+// Screen-space probe layout (must match WDGlobalGILimits in WDGlobalGIConfiguration.h). The screen
+// tile size is not here: it is resolution-dependent and arrives as PassSrg::m_screenProbeTileSize.
 #define WDGI_SP_OCTA 8     // octahedral radiance resolution per probe (WDGI_SP_OCTA x WDGI_SP_OCTA)
 #define WDGI_SP_COEFFS 9   // order-2 irradiance SH coefficients per probe
 

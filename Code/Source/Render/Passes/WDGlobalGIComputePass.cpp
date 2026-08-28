@@ -9,6 +9,7 @@
 #include <Render/Passes/WDGlobalGIComputePass.h>
 #include <Render/WDGlobalGIFeatureProcessor.h>
 
+#include <Atom/RHI/FrameGraphAttachmentInterface.h>
 #include <Atom/RHI/FrameGraphInterface.h>
 #include <Atom/RHI/FrameGraphCompileContext.h>
 #include <Atom/RHI/FrameGraphExecuteContext.h>
@@ -20,8 +21,33 @@ namespace AZ
 {
     namespace Render
     {
-        WDGlobalGIComputePass::WDGlobalGIComputePass(const RPI::PassDescriptor& descriptor, const char* shaderFilePath)
+        void WDGlobalGIImportAttachment(
+            RHI::FrameGraphInterface frameGraph,
+            const Data::Instance<RPI::AttachmentImage>& image,
+            const RHI::ImageViewDescriptor& viewDesc,
+            RHI::ScopeAttachmentAccess access,
+            RHI::ScopeAttachmentStage stage)
+        {
+            if (!image)
+            {
+                return;
+            }
+            const RHI::AttachmentId id = image->GetAttachmentId();
+            if (!frameGraph.GetAttachmentDatabase().IsAttachmentValid(id))
+            {
+                frameGraph.GetAttachmentDatabase().ImportImage(id, image->GetRHIImage());
+            }
+            RHI::ImageScopeAttachmentDescriptor desc;
+            desc.m_attachmentId = id;
+            desc.m_imageViewDescriptor = viewDesc;
+            desc.m_loadStoreAction.m_loadAction = RHI::AttachmentLoadAction::Load;
+            frameGraph.UseShaderAttachment(desc, access, stage);
+        }
+
+        WDGlobalGIComputePass::WDGlobalGIComputePass(
+            const RPI::PassDescriptor& descriptor, const char* shaderFilePath, bool requiresScreenProbes)
             : RPI::RenderPass(descriptor)
+            , m_requiresScreenProbes(requiresScreenProbes)
         {
             LoadShader(shaderFilePath);
         }
@@ -86,7 +112,11 @@ namespace AZ
             }
 
             WDGlobalGIFeatureProcessor* fp = GetFeatureProcessor();
-            return fp && fp->ShouldRender();
+            if (!fp || !fp->ShouldRender())
+            {
+                return false;
+            }
+            return !m_requiresScreenProbes || fp->GetUseScreenProbes();
         }
 
         void WDGlobalGIComputePass::SetupFrameGraphDependencies(RHI::FrameGraphInterface frameGraph)

@@ -105,38 +105,24 @@ namespace AZ
                 return;
             }
 
-            const RHI::ShaderResourceGroupLayout* layout = srg->GetLayout();
-            auto setImage = [&](const char* name, const RHI::ImageView* view)
-            {
-                if (!view)
-                {
-                    return;
-                }
-                RHI::ShaderInputImageIndex index = layout->FindShaderInputImageIndex(AZ::Name(name));
-                if (index.IsValid())
-                {
-                    srg->SetImageView(index, view);
-                }
-            };
-
             // G-buffer inputs + the real direct diffuse lighting.
             const RHI::ImageView* depthView = GetInputImageView(context, AZ::Name("Depth"));
-            setImage("m_depth", depthView);
-            setImage("m_normal", GetInputImageView(context, AZ::Name("Normal")));
-            setImage("m_albedo", GetInputImageView(context, AZ::Name("Albedo")));
-            setImage("m_lighting", GetInputImageView(context, AZ::Name("Lighting")));
+            WDGlobalGISetImage(srg, "m_depth", depthView);
+            WDGlobalGISetImage(srg, "m_normal", GetInputImageView(context, AZ::Name("Normal")));
+            WDGlobalGISetImage(srg, "m_albedo", GetInputImageView(context, AZ::Name("Albedo")));
+            WDGlobalGISetImage(srg, "m_lighting", GetInputImageView(context, AZ::Name("Lighting")));
 
             // Clipmaps: radiance (RW), irradiance (read, for the indirect bounce), voxel normal (RW).
             const auto& radiance = fp->GetClipmap().GetRadianceClipmap();
             const auto& irradiance = fp->GetClipmap().GetIrradianceClipmap();
             const auto& voxelNormal = fp->GetClipmap().GetVoxelNormalClipmap();
             const auto& albedo = fp->GetClipmap().GetAlbedoClipmap();
-            setImage("m_radianceClipmap", radiance ? radiance->GetImageView() : nullptr);
-            setImage("m_irradianceClipmap", irradiance ? irradiance->GetImageView() : nullptr);
-            setImage("m_voxelNormalClipmap", voxelNormal ? voxelNormal->GetImageView() : nullptr);
-            setImage("m_albedoClipmap", albedo ? albedo->GetImageView() : nullptr);
+            WDGlobalGISetImage(srg, "m_radianceClipmap", radiance ? radiance->GetImageView() : nullptr);
+            WDGlobalGISetImage(srg, "m_irradianceClipmap", irradiance ? irradiance->GetImageView() : nullptr);
+            WDGlobalGISetImage(srg, "m_voxelNormalClipmap", voxelNormal ? voxelNormal->GetImageView() : nullptr);
+            WDGlobalGISetImage(srg, "m_albedoClipmap", albedo ? albedo->GetImageView() : nullptr);
             const auto& anisoRadiance = fp->GetClipmap().GetAnisoRadianceClipmap();
-            setImage("m_anisoRadianceClipmap", anisoRadiance ? anisoRadiance->GetImageView() : nullptr);
+            WDGlobalGISetImage(srg, "m_anisoRadianceClipmap", anisoRadiance ? anisoRadiance->GetImageView() : nullptr);
 
             // Cache the dispatch resolution from the depth attachment.
             if (RPI::PassAttachmentBinding* binding = FindAttachmentBinding(AZ::Name("Depth")); binding && binding->GetAttachment())

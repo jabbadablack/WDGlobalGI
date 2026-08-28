@@ -30,7 +30,6 @@ namespace AZ
         private:
             explicit WDGlobalGIScreenProbeBlurPass(const RPI::PassDescriptor& descriptor);
 
-            bool IsEnabled() const override;
             void SetupGIFrameGraph(RHI::FrameGraphInterface frameGraph) override;
             void BindGIResources(const RHI::FrameGraphCompileContext& context, RPI::ShaderResourceGroup* srg) override;
             void GetDispatchThreadCount(uint32_t& x, uint32_t& y, uint32_t& z) const override;

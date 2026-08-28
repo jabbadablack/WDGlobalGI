@@ -49,31 +49,12 @@ namespace AZ
                 return;
             }
 
-            auto importUse = [&](const Data::Instance<RPI::AttachmentImage>& image,
-                                 const RHI::ImageViewDescriptor& viewDesc, RHI::ScopeAttachmentAccess access)
-            {
-                if (!image)
-                {
-                    return;
-                }
-                const RHI::AttachmentId id = image->GetAttachmentId();
-                if (!frameGraph.GetAttachmentDatabase().IsAttachmentValid(id))
-                {
-                    frameGraph.GetAttachmentDatabase().ImportImage(id, image->GetRHIImage());
-                }
-                RHI::ImageScopeAttachmentDescriptor desc;
-                desc.m_attachmentId = id;
-                desc.m_imageViewDescriptor = viewDesc;
-                desc.m_loadStoreAction.m_loadAction = RHI::AttachmentLoadAction::Load;
-                frameGraph.UseShaderAttachment(desc, access, RHI::ScopeAttachmentStage::ComputeShader);
-            };
-
             const auto& clipmap = fp->GetClipmap();
-            importUse(clipmap.GetAlbedoClipmap(), WDGlobalGIClipmap::GetAlbedoViewDescriptor(), RHI::ScopeAttachmentAccess::Read);
-            importUse(clipmap.GetVoxelNormalClipmap(), WDGlobalGIClipmap::GetVoxelNormalViewDescriptor(), RHI::ScopeAttachmentAccess::Read);
-            importUse(clipmap.GetIrradianceClipmap(), WDGlobalGIClipmap::GetIrradianceViewDescriptor(), RHI::ScopeAttachmentAccess::Read);
-            importUse(clipmap.GetSdfClipmap(), WDGlobalGIClipmap::GetSdfViewDescriptor(), RHI::ScopeAttachmentAccess::Read);
-            importUse(clipmap.GetRadianceClipmap(), WDGlobalGIClipmap::GetRadianceViewDescriptor(), RHI::ScopeAttachmentAccess::ReadWrite);
+            WDGlobalGIImportAttachment(frameGraph, clipmap.GetAlbedoClipmap(), WDGlobalGIClipmap::GetAlbedoViewDescriptor(), RHI::ScopeAttachmentAccess::Read);
+            WDGlobalGIImportAttachment(frameGraph, clipmap.GetVoxelNormalClipmap(), WDGlobalGIClipmap::GetVoxelNormalViewDescriptor(), RHI::ScopeAttachmentAccess::Read);
+            WDGlobalGIImportAttachment(frameGraph, clipmap.GetIrradianceClipmap(), WDGlobalGIClipmap::GetIrradianceViewDescriptor(), RHI::ScopeAttachmentAccess::Read);
+            WDGlobalGIImportAttachment(frameGraph, clipmap.GetSdfClipmap(), WDGlobalGIClipmap::GetSdfViewDescriptor(), RHI::ScopeAttachmentAccess::Read);
+            WDGlobalGIImportAttachment(frameGraph, clipmap.GetRadianceClipmap(), WDGlobalGIClipmap::GetRadianceViewDescriptor(), RHI::ScopeAttachmentAccess::ReadWrite);
         }
 
         void WDGlobalGIRelightPass::BindGIResources([[maybe_unused]] const RHI::FrameGraphCompileContext& context, RPI::ShaderResourceGroup* srg)
@@ -85,25 +66,12 @@ namespace AZ
             }
 
             const RHI::ShaderResourceGroupLayout* layout = srg->GetLayout();
-            auto setImage = [&](const char* name, const Data::Instance<RPI::AttachmentImage>& image)
-            {
-                if (!image)
-                {
-                    return;
-                }
-                RHI::ShaderInputImageIndex index = layout->FindShaderInputImageIndex(AZ::Name(name));
-                if (index.IsValid())
-                {
-                    srg->SetImageView(index, image->GetImageView());
-                }
-            };
-
             const auto& clipmap = fp->GetClipmap();
-            setImage("m_albedoClipmap", clipmap.GetAlbedoClipmap());
-            setImage("m_voxelNormalClipmap", clipmap.GetVoxelNormalClipmap());
-            setImage("m_irradianceClipmap", clipmap.GetIrradianceClipmap());
-            setImage("m_sdfClipmap", clipmap.GetSdfClipmap());
-            setImage("m_radianceClipmap", clipmap.GetRadianceClipmap());
+            WDGlobalGISetImage(srg, "m_albedoClipmap", clipmap.GetAlbedoClipmap());
+            WDGlobalGISetImage(srg, "m_voxelNormalClipmap", clipmap.GetVoxelNormalClipmap());
+            WDGlobalGISetImage(srg, "m_irradianceClipmap", clipmap.GetIrradianceClipmap());
+            WDGlobalGISetImage(srg, "m_sdfClipmap", clipmap.GetSdfClipmap());
+            WDGlobalGISetImage(srg, "m_radianceClipmap", clipmap.GetRadianceClipmap());
 
             // Auto scene sun: bind the scene's directional-light buffer + count so the shader can follow
             // the brightest light's direction. The directional-light feature processor exists in any
@@ -145,16 +113,8 @@ namespace AZ
                 }
             }
 
-            auto setConstRaw = [&](const char* name, const void* bytes, uint32_t byteCount)
-            {
-                const RHI::ShaderInputConstantIndex index = layout->FindShaderInputConstantIndex(AZ::Name(name));
-                if (index.IsValid())
-                {
-                    srg->SetConstantRaw(index, bytes, byteCount);
-                }
-            };
-            setConstRaw("m_autoSun", &autoSun, sizeof(autoSun));
-            setConstRaw("m_sceneDirLightCount", &lightCount, sizeof(lightCount));
+            WDGlobalGISetConstant(srg, "m_autoSun", &autoSun, sizeof(autoSun));
+            WDGlobalGISetConstant(srg, "m_sceneDirLightCount", &lightCount, sizeof(lightCount));
         }
 
         void WDGlobalGIRelightPass::GetDispatchThreadCount(uint32_t& x, uint32_t& y, uint32_t& z) const

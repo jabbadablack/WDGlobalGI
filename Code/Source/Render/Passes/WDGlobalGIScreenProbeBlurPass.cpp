@@ -24,18 +24,8 @@ namespace AZ
         }
 
         WDGlobalGIScreenProbeBlurPass::WDGlobalGIScreenProbeBlurPass(const RPI::PassDescriptor& descriptor)
-            : WDGlobalGIComputePass(descriptor, "Shaders/WDGlobalGI/WDGlobalGIScreenProbeBlur.azshader")
+            : WDGlobalGIComputePass(descriptor, "Shaders/WDGlobalGI/WDGlobalGIScreenProbeBlur.azshader", /*requiresScreenProbes=*/true)
         {
-        }
-
-        bool WDGlobalGIScreenProbeBlurPass::IsEnabled() const
-        {
-            if (!WDGlobalGIComputePass::IsEnabled())
-            {
-                return false;
-            }
-            WDGlobalGIFeatureProcessor* fp = GetFeatureProcessor();
-            return fp && fp->GetUseScreenProbes();
         }
 
         void WDGlobalGIScreenProbeBlurPass::SetupGIFrameGraph(RHI::FrameGraphInterface frameGraph)
@@ -46,27 +36,8 @@ namespace AZ
                 return;
             }
 
-            auto importUse = [&](const Data::Instance<RPI::AttachmentImage>& image,
-                                 const RHI::ImageViewDescriptor& viewDesc, RHI::ScopeAttachmentAccess access)
-            {
-                if (!image)
-                {
-                    return;
-                }
-                const RHI::AttachmentId id = image->GetAttachmentId();
-                if (!frameGraph.GetAttachmentDatabase().IsAttachmentValid(id))
-                {
-                    frameGraph.GetAttachmentDatabase().ImportImage(id, image->GetRHIImage());
-                }
-                RHI::ImageScopeAttachmentDescriptor desc;
-                desc.m_attachmentId = id;
-                desc.m_imageViewDescriptor = viewDesc;
-                desc.m_loadStoreAction.m_loadAction = RHI::AttachmentLoadAction::Load;
-                frameGraph.UseShaderAttachment(desc, access, RHI::ScopeAttachmentStage::ComputeShader);
-            };
-
-            importUse(fp->GetClipmap().GetScreenProbeSH(), WDGlobalGIClipmap::GetScreenProbeShViewDescriptor(), RHI::ScopeAttachmentAccess::Read);
-            importUse(fp->GetClipmap().GetScreenProbeSHBlurred(), WDGlobalGIClipmap::GetScreenProbeShViewDescriptor(), RHI::ScopeAttachmentAccess::ReadWrite);
+            WDGlobalGIImportAttachment(frameGraph, fp->GetClipmap().GetScreenProbeSH(), WDGlobalGIClipmap::GetScreenProbeShViewDescriptor(), RHI::ScopeAttachmentAccess::Read);
+            WDGlobalGIImportAttachment(frameGraph, fp->GetClipmap().GetScreenProbeSHBlurred(), WDGlobalGIClipmap::GetScreenProbeShViewDescriptor(), RHI::ScopeAttachmentAccess::ReadWrite);
         }
 
         void WDGlobalGIScreenProbeBlurPass::BindGIResources(const RHI::FrameGraphCompileContext& context, RPI::ShaderResourceGroup* srg)
@@ -77,27 +48,13 @@ namespace AZ
                 return;
             }
 
-            const RHI::ShaderResourceGroupLayout* layout = srg->GetLayout();
-            auto setImage = [&](const char* name, const RHI::ImageView* view)
-            {
-                if (!view)
-                {
-                    return;
-                }
-                RHI::ShaderInputImageIndex index = layout->FindShaderInputImageIndex(AZ::Name(name));
-                if (index.IsValid())
-                {
-                    srg->SetImageView(index, view);
-                }
-            };
-
-            setImage("m_depth", GetInputImageView(context, AZ::Name("Depth")));
+            WDGlobalGISetImage(srg, "m_depth", GetInputImageView(context, AZ::Name("Depth")));
             const auto& sh = fp->GetClipmap().GetScreenProbeSH();
             const auto& shBlurred = fp->GetClipmap().GetScreenProbeSHBlurred();
-            setImage("m_screenProbeSH", sh ? sh->GetImageView() : nullptr);
-            setImage("m_screenProbeSHBlurred", shBlurred ? shBlurred->GetImageView() : nullptr);
+            WDGlobalGISetImage(srg, "m_screenProbeSH", sh ? sh->GetImageView() : nullptr);
+            WDGlobalGISetImage(srg, "m_screenProbeSHBlurred", shBlurred ? shBlurred->GetImageView() : nullptr);
 
-            // Screen resolution -> probe tile counts (must match the trace / integrate passes).
+            // Screen resolution -> probe grid; ComputeScreenProbeGrid keeps every pass in agreement.
             uint32_t screenW = 1, screenH = 1;
             if (RPI::PassAttachmentBinding* binding = FindAttachmentBinding(AZ::Name("Depth")); binding && binding->GetAttachment())
             {
@@ -106,21 +63,11 @@ namespace AZ
                 screenH = imageDesc.m_size.m_height;
             }
 
-            const uint32_t tile = WDGlobalGILimits::ScreenProbeTileSize;
-            const uint32_t octa = WDGlobalGILimits::ScreenProbeOctaRes;
-            m_tilesX = AZ::GetMin((screenW + tile - 1) / tile, WDGlobalGILimits::ScreenProbeAtlasMaxWidth / octa);
-            m_tilesY = AZ::GetMin((screenH + tile - 1) / tile, WDGlobalGILimits::ScreenProbeAtlasMaxHeight / octa);
-
-            const uint32_t screenProbeInfo[4] = { screenW, screenH, m_tilesX, m_tilesY };
-            if (RHI::ShaderInputConstantIndex infoIndex = layout->FindShaderInputConstantIndex(AZ::Name("m_screenProbeInfo")); infoIndex.IsValid())
-            {
-                srg->SetConstantRaw(infoIndex, screenProbeInfo, sizeof(screenProbeInfo));
-            }
+            const WDGlobalGIClipmap::ScreenProbeGrid grid = WDGlobalGIClipmap::FillScreenProbeInfo(srg, screenW, screenH);
+            m_tilesX = grid.m_tilesX;
+            m_tilesY = grid.m_tilesY;
             const float blur = fp->GetConfiguration().m_screenProbeBlur;
-            if (RHI::ShaderInputConstantIndex blurIndex = layout->FindShaderInputConstantIndex(AZ::Name("m_screenProbeBlur")); blurIndex.IsValid())
-            {
-                srg->SetConstantRaw(blurIndex, &blur, sizeof(blur));
-            }
+            WDGlobalGISetConstant(srg, "m_screenProbeBlur", &blur, sizeof(blur));
         }
 
         void WDGlobalGIScreenProbeBlurPass::GetDispatchThreadCount(uint32_t& x, uint32_t& y, uint32_t& z) const

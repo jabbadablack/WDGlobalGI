@@ -21,6 +21,7 @@ ShaderResourceGroup PassSrg : SRG_PerPass
     WDGLOBALGI_SHARED_CONSTANTS
 
     uint4 m_screenProbeInfo;   // x = screenW, y = screenH, z = tilesX, w = tilesY
+    uint  m_screenProbeTileSize;
 }
 
 #include <WDGlobalGICommon.azsli>

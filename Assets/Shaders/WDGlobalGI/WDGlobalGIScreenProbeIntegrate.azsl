@@ -31,6 +31,7 @@ ShaderResourceGroup PassSrg : SRG_PerPass
     WDGLOBALGI_SHARED_CONSTANTS
 
     uint4 m_screenProbeInfo;   // x = screenW, y = screenH, z = tilesX, w = tilesY
+    uint  m_screenProbeTileSize;
     float m_screenProbeSpecular;
     float m_specularRoughness;  // glossy cone width (0 = sharp mirror, 1 = blurry)
 }
@@ -40,7 +41,8 @@ ShaderResourceGroup PassSrg : SRG_PerPass
 // Reconstruct the world position of a probe (tile centre) from the G-buffer depth.
 bool ProbeWorldPos(int2 tile, uint2 screenRes, out float3 worldPos)
 {
-    uint2 probePixel = min(uint2(tile) * uint(WDGI_SP_TILE) + (WDGI_SP_TILE / 2), screenRes - uint2(1, 1));
+    uint tileSize = PassSrg::m_screenProbeTileSize;
+    uint2 probePixel = min(uint2(tile) * tileSize + (tileSize / 2), screenRes - uint2(1, 1));
     float d = PassSrg::m_depth.Load(int2(probePixel), 0).r;
     if (d <= 0.0f)
     {
@@ -110,7 +112,7 @@ PSOutput MainPS(VSOutput IN)
     int2 maxTile = int2(PassSrg::m_screenProbeInfo.zw) - 1;
 
     // Probe-grid coordinate (probe centres sit at integer indices).
-    float2 probeCoord = float2(coords) / float(WDGI_SP_TILE) - 0.5f;
+    float2 probeCoord = float2(coords) / float(PassSrg::m_screenProbeTileSize) - 0.5f;
     int2 baseTile = int2(floor(probeCoord));
     float2 frac = probeCoord - float2(baseTile);
 

@@ -11,6 +11,8 @@
 #include <AzCore/Memory/SystemAllocator.h>
 #include <Atom/RHI/CommandList.h>
 #include <Atom/RHI/DispatchItem.h>
+#include <Atom/RHI/FrameGraphInterface.h>
+#include <Atom/RPI.Public/Image/AttachmentImage.h>
 #include <Atom/RPI.Public/Pass/RenderPass.h>
 #include <Atom/RPI.Public/Shader/Shader.h>
 #include <Atom/RPI.Public/Shader/ShaderResourceGroup.h>
@@ -20,6 +22,13 @@ namespace AZ
     namespace Render
     {
         class WDGlobalGIFeatureProcessor;
+
+        void WDGlobalGIImportAttachment(
+            RHI::FrameGraphInterface frameGraph,
+            const Data::Instance<RPI::AttachmentImage>& image,
+            const RHI::ImageViewDescriptor& viewDesc,
+            RHI::ScopeAttachmentAccess access,
+            RHI::ScopeAttachmentStage stage = RHI::ScopeAttachmentStage::ComputeShader);
 
         //! Shared base for the WDGlobalGI compute passes (SceneInject, Propagate, Apply).
         //!
@@ -35,7 +44,7 @@ namespace AZ
             AZ_CLASS_ALLOCATOR(WDGlobalGIComputePass, SystemAllocator);
 
         protected:
-            WDGlobalGIComputePass(const RPI::PassDescriptor& descriptor, const char* shaderFilePath);
+            WDGlobalGIComputePass(const RPI::PassDescriptor& descriptor, const char* shaderFilePath, bool requiresScreenProbes = false);
             virtual ~WDGlobalGIComputePass() = default;
 
             //! Resolve the GI feature processor for this pass's scene (null if absent).
@@ -71,6 +80,8 @@ namespace AZ
 
         private:
             void LoadShader(const char* shaderFilePath);
+
+            bool m_requiresScreenProbes = false;
         };
     } // namespace Render
 } // namespace AZ

@@ -59,7 +59,7 @@ namespace AZ
             // Screen-space probes (audit #2/#3). One probe per ScreenProbeTileSize x TileSize screen
             // tile, each storing an OctaRes x OctaRes octahedral radiance map in a 2D atlas. The atlas
             // is allocated once at a fixed maximum (supports up to ~4K) and the live sub-region is used.
-            static constexpr uint32_t ScreenProbeTileSize = 16; // must match WDGI_SP_TILE in the shaders
+            static constexpr uint32_t ScreenProbeTileSize = 16; // default; grows via ComputeScreenProbeGrid
             static constexpr uint32_t ScreenProbeOctaRes = 8;   // must match WDGI_SP_OCTA in the shaders
             static constexpr uint32_t ScreenProbeAtlasMaxWidth = 1920;  // 240 tiles * 8 (4K width / 16)
             static constexpr uint32_t ScreenProbeAtlasMaxHeight = 1080; // 135 tiles * 8 (4K height / 16)

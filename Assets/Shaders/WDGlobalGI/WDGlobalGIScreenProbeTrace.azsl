@@ -4,7 +4,7 @@
  *
  * SPDX-License-Identifier: Apache-2.0 OR MIT
  *
- * WDGlobalGI screen-space probe trace (audit #2 + #3). One probe per WDGI_SP_TILE screen tile; this
+ * WDGlobalGI screen-space probe trace (audit #2 + #3). One probe per screen tile; this
  * pass dispatches one thread per probe octahedral texel (atlas pixel), reconstructs the probe's world
  * position from the G-buffer at the tile centre, sphere-traces that octahedral direction through the
  * voxel scene, and temporally blends the radiance into the persistent octahedral atlas. The atlas is
@@ -29,6 +29,7 @@ ShaderResourceGroup PassSrg : SRG_PerPass
     WDGLOBALGI_SHARED_CONSTANTS
 
     uint4 m_screenProbeInfo;   // x = screenW, y = screenH, z = tilesX, w = tilesY
+    uint  m_screenProbeTileSize;
     float m_screenProbeTemporal;
 }
 
@@ -52,7 +53,8 @@ void MainCS(uint3 dispatch_id : SV_DispatchThreadID)
     uint2 octa = atlasCoord % WDGI_SP_OCTA;
 
     uint2 screenRes = PassSrg::m_screenProbeInfo.xy;
-    uint2 probePixel = min(tile * WDGI_SP_TILE + (WDGI_SP_TILE / 2), screenRes - uint2(1, 1));
+    uint tileSize = PassSrg::m_screenProbeTileSize;
+    uint2 probePixel = min(tile * tileSize + (tileSize / 2), screenRes - uint2(1, 1));
 
     float depth = PassSrg::m_depth.Load(int2(probePixel), 0).r;
 
@@ -86,7 +88,7 @@ void MainCS(uint3 dispatch_id : SV_DispatchThreadID)
             float2 prevUv = float2(prevNdc.x * 0.5f + 0.5f, 0.5f - prevNdc.y * 0.5f);
             if (prevUv.x >= 0.0f && prevUv.x <= 1.0f && prevUv.y >= 0.0f && prevUv.y <= 1.0f)
             {
-                uint2 prevTile = (uint2)(prevUv * float2(screenRes) / float(WDGI_SP_TILE));
+                uint2 prevTile = (uint2)(prevUv * float2(screenRes) / float(tileSize));
                 prevTile = min(prevTile, uint2(tilesX - 1u, tilesY - 1u));
                 uint2 prevAtlasCoord = prevTile * uint(WDGI_SP_OCTA) + octa;
                 prev = PassSrg::m_screenProbeHistory.Load(int3(prevAtlasCoord, 0));

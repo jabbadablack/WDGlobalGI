@@ -83,21 +83,10 @@ namespace AZ
             {
                 fp->GetClipmap().FillSharedConstants(srg.get());
 
-                const RHI::ShaderResourceGroupLayout* layout = srg->GetLayout();
-                const auto& froxel = fp->GetClipmap().GetVolumetricFroxel();
-                if (froxel)
-                {
-                    if (RHI::ShaderInputImageIndex index = layout->FindShaderInputImageIndex(AZ::Name("m_volumetricFroxel")); index.IsValid())
-                    {
-                        srg->SetImageView(index, froxel->GetImageView());
-                    }
-                }
+                WDGlobalGISetImage(srg.get(), "m_volumetricFroxel", fp->GetClipmap().GetVolumetricFroxel());
 
                 const float maxDist = fp->GetConfiguration().m_volumetricMaxDistance;
-                if (RHI::ShaderInputConstantIndex index = layout->FindShaderInputConstantIndex(AZ::Name("m_volumetricMaxDistance")); index.IsValid())
-                {
-                    srg->SetConstantRaw(index, &maxDist, sizeof(maxDist));
-                }
+                WDGlobalGISetConstant(srg.get(), "m_volumetricMaxDistance", &maxDist, sizeof(maxDist));
             }
 
             FullscreenTrianglePass::CompileResources(context);

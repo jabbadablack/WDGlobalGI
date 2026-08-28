@@ -97,25 +97,11 @@ namespace AZ
             {
                 fp->GetClipmap().FillSharedConstants(srg.get());
 
-                const RHI::ShaderResourceGroupLayout* layout = srg->GetLayout();
-                auto setImage = [&](const char* name, const Data::Instance<RPI::AttachmentImage>& image)
-                {
-                    if (!image)
-                    {
-                        return;
-                    }
-                    RHI::ShaderInputImageIndex index = layout->FindShaderInputImageIndex(AZ::Name(name));
-                    if (index.IsValid())
-                    {
-                        srg->SetImageView(index, image->GetImageView());
-                    }
-                };
-
-                setImage("m_radianceClipmap", fp->GetClipmap().GetRadianceClipmap());
-                setImage("m_sdfClipmap", fp->GetClipmap().GetSdfClipmap());
-                setImage("m_irradianceClipmap", fp->GetClipmap().GetIrradianceClipmap());
-                setImage("m_albedoClipmap", fp->GetClipmap().GetAlbedoClipmap());
-                setImage("m_voxelNormalClipmap", fp->GetClipmap().GetVoxelNormalClipmap());
+                WDGlobalGISetImage(srg.get(), "m_radianceClipmap", fp->GetClipmap().GetRadianceClipmap());
+                WDGlobalGISetImage(srg.get(), "m_sdfClipmap", fp->GetClipmap().GetSdfClipmap());
+                WDGlobalGISetImage(srg.get(), "m_irradianceClipmap", fp->GetClipmap().GetIrradianceClipmap());
+                WDGlobalGISetImage(srg.get(), "m_albedoClipmap", fp->GetClipmap().GetAlbedoClipmap());
+                WDGlobalGISetImage(srg.get(), "m_voxelNormalClipmap", fp->GetClipmap().GetVoxelNormalClipmap());
             }
 
             FullscreenTrianglePass::CompileResources(context);

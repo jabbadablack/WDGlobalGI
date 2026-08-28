@@ -24,18 +24,8 @@ namespace AZ
         }
 
         WDGlobalGIScreenProbeTracePass::WDGlobalGIScreenProbeTracePass(const RPI::PassDescriptor& descriptor)
-            : WDGlobalGIComputePass(descriptor, "Shaders/WDGlobalGI/WDGlobalGIScreenProbeTrace.azshader")
+            : WDGlobalGIComputePass(descriptor, "Shaders/WDGlobalGI/WDGlobalGIScreenProbeTrace.azshader", /*requiresScreenProbes=*/true)
         {
-        }
-
-        bool WDGlobalGIScreenProbeTracePass::IsEnabled() const
-        {
-            if (!WDGlobalGIComputePass::IsEnabled())
-            {
-                return false;
-            }
-            WDGlobalGIFeatureProcessor* fp = GetFeatureProcessor();
-            return fp && fp->GetUseScreenProbes();
         }
 
         void WDGlobalGIScreenProbeTracePass::SetupGIFrameGraph(RHI::FrameGraphInterface frameGraph)
@@ -46,36 +36,17 @@ namespace AZ
                 return;
             }
 
-            auto importUse = [&](const Data::Instance<RPI::AttachmentImage>& image,
-                                 const RHI::ImageViewDescriptor& viewDesc, RHI::ScopeAttachmentAccess access)
-            {
-                if (!image)
-                {
-                    return;
-                }
-                const RHI::AttachmentId id = image->GetAttachmentId();
-                if (!frameGraph.GetAttachmentDatabase().IsAttachmentValid(id))
-                {
-                    frameGraph.GetAttachmentDatabase().ImportImage(id, image->GetRHIImage());
-                }
-                RHI::ImageScopeAttachmentDescriptor desc;
-                desc.m_attachmentId = id;
-                desc.m_imageViewDescriptor = viewDesc;
-                desc.m_loadStoreAction.m_loadAction = RHI::AttachmentLoadAction::Load;
-                frameGraph.UseShaderAttachment(desc, access, RHI::ScopeAttachmentStage::ComputeShader);
-            };
-
             const uint32_t frameIndex = fp->GetClipmap().GetShaderConstants().m_frameIndex;
-            importUse(fp->GetClipmap().GetRadianceClipmap(), WDGlobalGIClipmap::GetRadianceViewDescriptor(), RHI::ScopeAttachmentAccess::Read);
-            importUse(fp->GetClipmap().GetSdfClipmap(), WDGlobalGIClipmap::GetSdfViewDescriptor(), RHI::ScopeAttachmentAccess::Read);
-            importUse(fp->GetClipmap().GetVoxelNormalClipmap(), WDGlobalGIClipmap::GetVoxelNormalViewDescriptor(), RHI::ScopeAttachmentAccess::Read);
-            importUse(fp->GetClipmap().GetAnisoRadianceClipmap(), WDGlobalGIClipmap::GetAnisoRadianceViewDescriptor(), RHI::ScopeAttachmentAccess::Read);
-            importUse(fp->GetClipmap().GetIrradianceClipmap(), WDGlobalGIClipmap::GetIrradianceViewDescriptor(), RHI::ScopeAttachmentAccess::Read);
+            WDGlobalGIImportAttachment(frameGraph, fp->GetClipmap().GetRadianceClipmap(), WDGlobalGIClipmap::GetRadianceViewDescriptor(), RHI::ScopeAttachmentAccess::Read);
+            WDGlobalGIImportAttachment(frameGraph, fp->GetClipmap().GetSdfClipmap(), WDGlobalGIClipmap::GetSdfViewDescriptor(), RHI::ScopeAttachmentAccess::Read);
+            WDGlobalGIImportAttachment(frameGraph, fp->GetClipmap().GetVoxelNormalClipmap(), WDGlobalGIClipmap::GetVoxelNormalViewDescriptor(), RHI::ScopeAttachmentAccess::Read);
+            WDGlobalGIImportAttachment(frameGraph, fp->GetClipmap().GetAnisoRadianceClipmap(), WDGlobalGIClipmap::GetAnisoRadianceViewDescriptor(), RHI::ScopeAttachmentAccess::Read);
+            WDGlobalGIImportAttachment(frameGraph, fp->GetClipmap().GetIrradianceClipmap(), WDGlobalGIClipmap::GetIrradianceViewDescriptor(), RHI::ScopeAttachmentAccess::Read);
             // Ping-pong: write the "current" atlas, read the "previous" one (reprojected) for history.
-            importUse(fp->GetClipmap().GetScreenProbeAtlasCurrent(frameIndex), WDGlobalGIClipmap::GetScreenProbeAtlasViewDescriptor(), RHI::ScopeAttachmentAccess::ReadWrite);
-            importUse(fp->GetClipmap().GetScreenProbeAtlasPrev(frameIndex), WDGlobalGIClipmap::GetScreenProbeAtlasViewDescriptor(), RHI::ScopeAttachmentAccess::Read);
+            WDGlobalGIImportAttachment(frameGraph, fp->GetClipmap().GetScreenProbeAtlasCurrent(frameIndex), WDGlobalGIClipmap::GetScreenProbeAtlasViewDescriptor(), RHI::ScopeAttachmentAccess::ReadWrite);
+            WDGlobalGIImportAttachment(frameGraph, fp->GetClipmap().GetScreenProbeAtlasPrev(frameIndex), WDGlobalGIClipmap::GetScreenProbeAtlasViewDescriptor(), RHI::ScopeAttachmentAccess::Read);
             // Depth/visibility moments atlas (Chebyshev), written fresh each frame.
-            importUse(fp->GetClipmap().GetScreenProbeDepthAtlas(), WDGlobalGIClipmap::GetScreenProbeAtlasViewDescriptor(), RHI::ScopeAttachmentAccess::ReadWrite);
+            WDGlobalGIImportAttachment(frameGraph, fp->GetClipmap().GetScreenProbeDepthAtlas(), WDGlobalGIClipmap::GetScreenProbeAtlasViewDescriptor(), RHI::ScopeAttachmentAccess::ReadWrite);
         }
 
         void WDGlobalGIScreenProbeTracePass::BindGIResources(const RHI::FrameGraphCompileContext& context, RPI::ShaderResourceGroup* srg)
@@ -86,22 +57,8 @@ namespace AZ
                 return;
             }
 
-            const RHI::ShaderResourceGroupLayout* layout = srg->GetLayout();
-            auto setImage = [&](const char* name, const RHI::ImageView* view)
-            {
-                if (!view)
-                {
-                    return;
-                }
-                RHI::ShaderInputImageIndex index = layout->FindShaderInputImageIndex(AZ::Name(name));
-                if (index.IsValid())
-                {
-                    srg->SetImageView(index, view);
-                }
-            };
-
             const uint32_t frameIndex = fp->GetClipmap().GetShaderConstants().m_frameIndex;
-            setImage("m_depth", GetInputImageView(context, AZ::Name("Depth")));
+            WDGlobalGISetImage(srg, "m_depth", GetInputImageView(context, AZ::Name("Depth")));
             const auto& radiance = fp->GetClipmap().GetRadianceClipmap();
             const auto& sdf = fp->GetClipmap().GetSdfClipmap();
             const auto& voxelNormal = fp->GetClipmap().GetVoxelNormalClipmap();
@@ -109,17 +66,17 @@ namespace AZ
             const auto& irradiance = fp->GetClipmap().GetIrradianceClipmap();
             const auto& atlasCurrent = fp->GetClipmap().GetScreenProbeAtlasCurrent(frameIndex);
             const auto& atlasPrev = fp->GetClipmap().GetScreenProbeAtlasPrev(frameIndex);
-            setImage("m_radianceClipmap", radiance ? radiance->GetImageView() : nullptr);
-            setImage("m_sdfClipmap", sdf ? sdf->GetImageView() : nullptr);
-            setImage("m_voxelNormalClipmap", voxelNormal ? voxelNormal->GetImageView() : nullptr);
-            setImage("m_anisoRadianceClipmap", anisoRadiance ? anisoRadiance->GetImageView() : nullptr);
-            setImage("m_irradianceClipmap", irradiance ? irradiance->GetImageView() : nullptr);
-            setImage("m_screenProbeAtlas", atlasCurrent ? atlasCurrent->GetImageView() : nullptr);
-            setImage("m_screenProbeHistory", atlasPrev ? atlasPrev->GetImageView() : nullptr);
+            WDGlobalGISetImage(srg, "m_radianceClipmap", radiance ? radiance->GetImageView() : nullptr);
+            WDGlobalGISetImage(srg, "m_sdfClipmap", sdf ? sdf->GetImageView() : nullptr);
+            WDGlobalGISetImage(srg, "m_voxelNormalClipmap", voxelNormal ? voxelNormal->GetImageView() : nullptr);
+            WDGlobalGISetImage(srg, "m_anisoRadianceClipmap", anisoRadiance ? anisoRadiance->GetImageView() : nullptr);
+            WDGlobalGISetImage(srg, "m_irradianceClipmap", irradiance ? irradiance->GetImageView() : nullptr);
+            WDGlobalGISetImage(srg, "m_screenProbeAtlas", atlasCurrent ? atlasCurrent->GetImageView() : nullptr);
+            WDGlobalGISetImage(srg, "m_screenProbeHistory", atlasPrev ? atlasPrev->GetImageView() : nullptr);
             const auto& depthAtlas = fp->GetClipmap().GetScreenProbeDepthAtlas();
-            setImage("m_screenProbeDepthAtlas", depthAtlas ? depthAtlas->GetImageView() : nullptr);
+            WDGlobalGISetImage(srg, "m_screenProbeDepthAtlas", depthAtlas ? depthAtlas->GetImageView() : nullptr);
 
-            // Screen resolution -> probe tile counts (clamped to the atlas max).
+            // Screen resolution -> probe grid; the tile size grows if the frame needs more probes than fit.
             uint32_t screenW = 1, screenH = 1;
             if (RPI::PassAttachmentBinding* binding = FindAttachmentBinding(AZ::Name("Depth")); binding && binding->GetAttachment())
             {
@@ -128,21 +85,11 @@ namespace AZ
                 screenH = imageDesc.m_size.m_height;
             }
 
-            const uint32_t tile = WDGlobalGILimits::ScreenProbeTileSize;
-            const uint32_t octa = WDGlobalGILimits::ScreenProbeOctaRes;
-            m_tilesX = AZ::GetMin((screenW + tile - 1) / tile, WDGlobalGILimits::ScreenProbeAtlasMaxWidth / octa);
-            m_tilesY = AZ::GetMin((screenH + tile - 1) / tile, WDGlobalGILimits::ScreenProbeAtlasMaxHeight / octa);
-
-            const uint32_t screenProbeInfo[4] = { screenW, screenH, m_tilesX, m_tilesY };
-            if (RHI::ShaderInputConstantIndex infoIndex = layout->FindShaderInputConstantIndex(AZ::Name("m_screenProbeInfo")); infoIndex.IsValid())
-            {
-                srg->SetConstantRaw(infoIndex, screenProbeInfo, sizeof(screenProbeInfo));
-            }
+            const WDGlobalGIClipmap::ScreenProbeGrid grid = WDGlobalGIClipmap::FillScreenProbeInfo(srg, screenW, screenH);
+            m_tilesX = grid.m_tilesX;
+            m_tilesY = grid.m_tilesY;
             const float temporal = fp->GetScreenProbeTemporal();
-            if (RHI::ShaderInputConstantIndex tIndex = layout->FindShaderInputConstantIndex(AZ::Name("m_screenProbeTemporal")); tIndex.IsValid())
-            {
-                srg->SetConstantRaw(tIndex, &temporal, sizeof(temporal));
-            }
+            WDGlobalGISetConstant(srg, "m_screenProbeTemporal", &temporal, sizeof(temporal));
         }
 
         void WDGlobalGIScreenProbeTracePass::GetDispatchThreadCount(uint32_t& x, uint32_t& y, uint32_t& z) const

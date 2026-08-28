@@ -79,22 +79,8 @@ namespace AZ
                 return;
             }
 
-            const RHI::ShaderResourceGroupLayout* layout = srg->GetLayout();
-            auto setImage = [&](const char* name, const Data::Instance<RPI::AttachmentImage>& image)
-            {
-                if (!image)
-                {
-                    return;
-                }
-                RHI::ShaderInputImageIndex index = layout->FindShaderInputImageIndex(AZ::Name(name));
-                if (index.IsValid())
-                {
-                    srg->SetImageView(index, image->GetImageView());
-                }
-            };
-
-            setImage("m_radianceClipmap", fp->GetClipmap().GetRadianceClipmap());
-            setImage("m_sdfClipmap", fp->GetClipmap().GetSdfClipmap());
+            WDGlobalGISetImage(srg, "m_radianceClipmap", fp->GetClipmap().GetRadianceClipmap());
+            WDGlobalGISetImage(srg, "m_sdfClipmap", fp->GetClipmap().GetSdfClipmap());
         }
 
         void WDGlobalGISdfUpdatePass::GetDispatchThreadCount(uint32_t& x, uint32_t& y, uint32_t& z) const

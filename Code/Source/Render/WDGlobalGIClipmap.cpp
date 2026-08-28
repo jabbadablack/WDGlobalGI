@@ -285,6 +285,73 @@ namespace AZ
             m_constants.m_cascadeBlend = AZ::GetClamp(config.m_cascadeBlend, 0.0f, 1.0f);
         }
 
+        void WDGlobalGISetImage(RPI::ShaderResourceGroup* srg, const char* name, const RHI::ImageView* view)
+        {
+            if (!srg || !view)
+            {
+                return;
+            }
+            RHI::ShaderInputImageIndex index = srg->GetLayout()->FindShaderInputImageIndex(AZ::Name(name));
+            if (index.IsValid())
+            {
+                srg->SetImageView(index, view);
+            }
+        }
+
+        void WDGlobalGISetImage(RPI::ShaderResourceGroup* srg, const char* name, const Data::Instance<RPI::AttachmentImage>& image)
+        {
+            WDGlobalGISetImage(srg, name, image ? image->GetImageView() : nullptr);
+        }
+
+        void WDGlobalGISetConstant(RPI::ShaderResourceGroup* srg, const char* name, const void* bytes, uint32_t byteCount)
+        {
+            if (!srg)
+            {
+                return;
+            }
+            RHI::ShaderInputConstantIndex index = srg->GetLayout()->FindShaderInputConstantIndex(AZ::Name(name));
+            if (index.IsValid())
+            {
+                srg->SetConstantRaw(index, bytes, byteCount);
+            }
+        }
+
+        WDGlobalGIClipmap::ScreenProbeGrid WDGlobalGIClipmap::ComputeScreenProbeGrid(uint32_t screenWidth, uint32_t screenHeight)
+        {
+            const uint32_t octa = WDGlobalGILimits::ScreenProbeOctaRes;
+            const uint32_t maxTilesX = AZ::GetMax(WDGlobalGILimits::ScreenProbeAtlasMaxWidth / octa, 1u);
+            const uint32_t maxTilesY = AZ::GetMax(WDGlobalGILimits::ScreenProbeAtlasMaxHeight / octa, 1u);
+
+            const uint32_t width = AZ::GetMax(screenWidth, 1u);
+            const uint32_t height = AZ::GetMax(screenHeight, 1u);
+
+            ScreenProbeGrid grid;
+            for (;;)
+            {
+                grid.m_tilesX = (width + grid.m_tileSize - 1) / grid.m_tileSize;
+                grid.m_tilesY = (height + grid.m_tileSize - 1) / grid.m_tileSize;
+                if ((grid.m_tilesX <= maxTilesX && grid.m_tilesY <= maxTilesY) || grid.m_tileSize >= 1024u)
+                {
+                    break;
+                }
+                grid.m_tileSize *= 2u;
+            }
+
+            grid.m_tilesX = AZ::GetClamp(grid.m_tilesX, 1u, maxTilesX);
+            grid.m_tilesY = AZ::GetClamp(grid.m_tilesY, 1u, maxTilesY);
+            return grid;
+        }
+
+        WDGlobalGIClipmap::ScreenProbeGrid WDGlobalGIClipmap::FillScreenProbeInfo(
+            RPI::ShaderResourceGroup* srg, uint32_t screenWidth, uint32_t screenHeight)
+        {
+            const ScreenProbeGrid grid = ComputeScreenProbeGrid(screenWidth, screenHeight);
+            const uint32_t info[4] = { screenWidth, screenHeight, grid.m_tilesX, grid.m_tilesY };
+            WDGlobalGISetConstant(srg, "m_screenProbeInfo", info, sizeof(info));
+            WDGlobalGISetConstant(srg, "m_screenProbeTileSize", &grid.m_tileSize, sizeof(grid.m_tileSize));
+            return grid;
+        }
+
         void WDGlobalGIClipmap::FillSharedConstants(RPI::ShaderResourceGroup* srg) const
         {
             if (!srg)
@@ -292,15 +359,9 @@ namespace AZ
                 return;
             }
 
-            const RHI::ShaderResourceGroupLayout* layout = srg->GetLayout();
-
             auto setRaw = [&](const char* name, const void* bytes, uint32_t byteCount)
             {
-                RHI::ShaderInputConstantIndex index = layout->FindShaderInputConstantIndex(AZ::Name(name));
-                if (index.IsValid())
-                {
-                    srg->SetConstantRaw(index, bytes, byteCount);
-                }
+                WDGlobalGISetConstant(srg, name, bytes, byteCount);
             };
 
             setRaw("m_gridResolution", m_constants.m_gridResolution, sizeof(m_constants.m_gridResolution));

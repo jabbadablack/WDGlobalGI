@@ -13,6 +13,7 @@
 #include <AzCore/std/containers/array.h>
 
 #include <Atom/RHI/Image.h>
+#include <Atom/RHI/ImageView.h>
 #include <Atom/RHI.Reflect/Format.h>
 #include <Atom/RHI.Reflect/ImageViewDescriptor.h>
 #include <Atom/RPI.Public/Image/AttachmentImage.h>
@@ -28,6 +29,11 @@ namespace AZ
 
     namespace Render
     {
+        void WDGlobalGISetImage(RPI::ShaderResourceGroup* srg, const char* name, const RHI::ImageView* view);
+        void WDGlobalGISetImage(RPI::ShaderResourceGroup* srg, const char* name, const Data::Instance<RPI::AttachmentImage>& image);
+
+        void WDGlobalGISetConstant(RPI::ShaderResourceGroup* srg, const char* name, const void* bytes, uint32_t byteCount);
+
         //! Owns the two persistent, camera-following 3D clipmap textures used by the Dagor GI
         //! solution and computes the per-cascade addressing constants that the compute shaders need.
         //!
@@ -184,6 +190,16 @@ namespace AZ
             //! Write the shared constant block (cascade addressing, lighting environment, tuning) onto
             //! a pass shader resource group. Texture views are bound separately by each pass.
             void FillSharedConstants(RPI::ShaderResourceGroup* srg) const;
+
+            struct ScreenProbeGrid
+            {
+                uint32_t m_tileSize = WDGlobalGILimits::ScreenProbeTileSize;
+                uint32_t m_tilesX = 1;
+                uint32_t m_tilesY = 1;
+            };
+            static ScreenProbeGrid ComputeScreenProbeGrid(uint32_t screenWidth, uint32_t screenHeight);
+
+            static ScreenProbeGrid FillScreenProbeInfo(RPI::ShaderResourceGroup* srg, uint32_t screenWidth, uint32_t screenHeight);
 
         private:
             static Data::Instance<RPI::AttachmentImage> CreateClipmapImage(uint32_t depth, RHI::Format format, const char* name);
